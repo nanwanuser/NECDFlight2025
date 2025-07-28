@@ -1,0 +1,8 @@
+<launch>
+  <!-- STM32通信节点 -->
+  <node name="stm32_node" pkg="stm32_comm" type="stm32_node" output="screen">
+    <!-- 串口配置 -->
+    <param name="port" value="/dev/ttyUSB0"/>
+    <param name="baudrate" value="115200"/>
+  </node>
+</launch>

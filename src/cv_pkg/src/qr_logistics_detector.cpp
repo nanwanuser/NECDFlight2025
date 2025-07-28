@@ -351,4 +351,4 @@ int main(int argc, char** argv) {
     QRLogisticsDetector detector(nh);
     detector.run();
     return 0;
- 
+}
