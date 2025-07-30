@@ -27,7 +27,6 @@ public:
 		double rc;
 		double cmd;
 		double imu;
-		double bat;
 	};
 
 	struct ThrustMapping
@@ -70,7 +69,6 @@ public:
 	double max_angle;
 	double ctrl_freq_max;
 	double max_manual_vel;
-	double low_voltage;
 
 	bool use_bodyrate_ctrl;
 	// bool print_dbg;

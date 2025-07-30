@@ -316,9 +316,7 @@ void PX4CtrlFSM::process()
 	// STEP2: estimate thrust model
 	if (state == AUTO_HOVER || state == CMD_CTRL)
 	{
-		// controller.estimateThrustModel(imu_data.a, bat_data.volt, param);
 		controller.estimateThrustModel(imu_data.a,param);
-
 	}
 
 	// STEP3: solve and update new control commands
@@ -611,11 +609,6 @@ bool PX4CtrlFSM::odom_is_received(const ros::Time &now_time)
 bool PX4CtrlFSM::imu_is_received(const ros::Time &now_time)
 {
 	return (now_time - imu_data.rcv_stamp).toSec() < param.msg_timeout.imu;
-}
-
-bool PX4CtrlFSM::bat_is_received(const ros::Time &now_time)
-{
-	return (now_time - bat_data.rcv_stamp).toSec() < param.msg_timeout.bat;
 }
 
 bool PX4CtrlFSM::recv_new_odom()

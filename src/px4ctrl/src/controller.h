@@ -85,7 +85,7 @@ Px4ctrlDebug_t calculateControl(const Desired_State_t &des,
 const Odom_Data_t &odom,
 const Imu_Data_t &imu,
 Controller_Output_t &u);
-	bool estimateThrustModel(const Eigen::Vector3d &est_v,
+	bool estimateThrustModel(const Eigen::Vector3d &est_a,
 		const Parameter_t &param);
 	void resetThrustMapping(void);
 

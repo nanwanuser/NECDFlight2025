@@ -63,13 +63,6 @@ int main(int argc, char *argv[])
                                                  boost::bind(&RC_Data_t::feed, &fsm.rc_data, _1));
     }
 
-    ros::Subscriber bat_sub =
-        nh.subscribe<sensor_msgs::BatteryState>("/mavros/battery",
-                                                100,
-                                                boost::bind(&Battery_Data_t::feed, &fsm.bat_data, _1),
-                                                ros::VoidConstPtr(),
-                                                ros::TransportHints().tcpNoDelay());
-
     ros::Subscriber takeoff_land_sub =
         nh.subscribe<std_msgs::Bool>("takeoff_land",
                                      100,

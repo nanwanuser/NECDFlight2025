@@ -28,7 +28,6 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "msg_timeout/rc", msg_timeout.rc);
 	read_essential_param(nh, "msg_timeout/cmd", msg_timeout.cmd);
 	read_essential_param(nh, "msg_timeout/imu", msg_timeout.imu);
-	read_essential_param(nh, "msg_timeout/bat", msg_timeout.bat);
 
 	read_essential_param(nh, "pose_solver", pose_solver);
 	read_essential_param(nh, "mass", mass);
@@ -37,7 +36,6 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "use_bodyrate_ctrl", use_bodyrate_ctrl);
 	read_essential_param(nh, "max_manual_vel", max_manual_vel);
 	read_essential_param(nh, "max_angle", max_angle);
-	read_essential_param(nh, "low_voltage", low_voltage);
 
 	read_essential_param(nh, "rc_reverse/roll", rc_reverse.roll);
 	read_essential_param(nh, "rc_reverse/pitch", rc_reverse.pitch);
@@ -56,7 +54,7 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "thrust_model/K3", thr_map.K3);
 	read_essential_param(nh, "thrust_model/accurate_thrust_model", thr_map.accurate_thrust_model);
 	read_essential_param(nh, "thrust_model/hover_percentage", thr_map.hover_percentage);
-	
+
 
 	max_angle /= (180.0 / M_PI);
 

@@ -40,7 +40,6 @@ public:
 	Odom_Data_t odom_data;
 	Imu_Data_t imu_data;
 	Command_Data_t cmd_data;
-	Battery_Data_t bat_data;
 	Takeoff_Land_Data_t takeoff_land_data;
 
 	LinearControl &controller;
@@ -71,7 +70,6 @@ public:
 	bool cmd_is_received(const ros::Time &now_time);
 	bool odom_is_received(const ros::Time &now_time);
 	bool imu_is_received(const ros::Time &now_time);
-	bool bat_is_received(const ros::Time &now_time);
 	bool recv_new_odom();
 	State_t get_state() { return state; }
 	bool get_landed() { return takeoff_land.landed; }

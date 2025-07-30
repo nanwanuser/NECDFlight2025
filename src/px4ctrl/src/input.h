@@ -10,7 +10,6 @@
 #include <mavros_msgs/RCIn.h>
 #include <mavros_msgs/State.h>
 #include <mavros_msgs/ExtendedState.h>
-#include <sensor_msgs/BatteryState.h>
 #include <uav_utils/utils.h>
 #include "PX4CtrlParam.h"
 
@@ -113,20 +112,6 @@ public:
 
   Command_Data_t();
   void feed(geometry_msgs::PoseStampedConstPtr pMsg);
-};
-
-class Battery_Data_t
-{
-public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  double volt{0.0};
-  double percentage{0.0};
-
-  sensor_msgs::BatteryState msg;
-  ros::Time rcv_stamp;
-
-  Battery_Data_t();
-  void feed(sensor_msgs::BatteryStateConstPtr pMsg);
 };
 
 class Takeoff_Land_Data_t
