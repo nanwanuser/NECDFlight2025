@@ -41,14 +41,13 @@ public:
 
 	LinearControl &controller;
 
-	ros::Publisher traj_start_trigger_pub;
-	ros::Publisher ctrl_FCU_pub;
+ros::Publisher ctrl_FCU_pub;
 	ros::Publisher debug_pub; //debug
 	ros::ServiceClient set_FCU_mode_srv;
 	ros::ServiceClient arming_client_srv;
 	ros::ServiceClient reboot_FCU_srv;
 
-	quadrotor_msgs::Px4ctrlDebug debug_msg; //debug
+Px4ctrlDebug_t debug_msg; //debug
 
 	Eigen::Vector4d hover_pose;
 	ros::Time last_set_hover_pose_time;
@@ -96,9 +95,8 @@ private:
 	bool toggle_arm_disarm(bool arm); // It will only try to toggle once, so not blocked.
 	void reboot_FCU();
 
-	void publish_bodyrate_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
-	void publish_attitude_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
-	void publish_trigger(const nav_msgs::Odometry &odom_msg);
+void publish_bodyrate_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
+void publish_attitude_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
 };
 
 #endif

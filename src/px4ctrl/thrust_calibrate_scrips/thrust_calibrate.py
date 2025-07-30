@@ -38,8 +38,6 @@ class ThrustCalibration:
             "/mavros/battery", BatteryState, self.battery_voltage_cb)
         rospy.Subscriber(
             "/mavros/setpoint_raw/attitude", AttitudeTarget, self.thrust_commands_cb)
-        rospy.Subscriber(
-            "/traj_start_trigger", PoseStamped, self.start_trigger_cb)
 
     def battery_voltage_cb(self, msg):
 
@@ -79,13 +77,6 @@ class ThrustCalibration:
         self.cmd_buf = np.append(self.cmd_buf, np.array([msg.thrust]), axis=0)
         print msg.thrust
 
-    def start_trigger_cb(self, msg):
-
-        self.count_start_trigger_received += 1
-        if(self.count_start_trigger_received == 1):
-            rospy.loginfo("Start recording.")
-        if(self.count_start_trigger_received > 1):
-            rospy.loginfo("Stop recording.")
 
     def cal_and_save_data(self):
         rospy.loginfo("Data storing.")

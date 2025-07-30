@@ -10,7 +10,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
 find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
-  quadrotor_msgs
+  std_msgs
   geometry_msgs
   sensor_msgs
   uav_utils
@@ -38,7 +38,6 @@ add_executable(px4ctrl_node
   src/input.cpp
 )
 
-add_dependencies(px4ctrl_node quadrotor_msgs)
 
 target_link_libraries(px4ctrl_node
   ${catkin_LIBRARIES}

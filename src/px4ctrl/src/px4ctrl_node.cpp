@@ -40,12 +40,13 @@ int main(int argc, char *argv[])
                                          ros::VoidConstPtr(),
                                          ros::TransportHints().tcpNoDelay());
 
+    // Modified: Subscribe to geometry_msgs::PoseStamped instead of quadrotor_msgs::PositionCommand
     ros::Subscriber cmd_sub =
-        nh.subscribe<quadrotor_msgs::PositionCommand>("cmd",
-                                                      100,
-                                                      boost::bind(&Command_Data_t::feed, &fsm.cmd_data, _1),
-                                                      ros::VoidConstPtr(),
-                                                      ros::TransportHints().tcpNoDelay());
+        nh.subscribe<geometry_msgs::PoseStamped>("cmd",
+                                                 100,
+                                                 boost::bind(&Command_Data_t::feed, &fsm.cmd_data, _1),
+                                                 ros::VoidConstPtr(),
+                                                 ros::TransportHints().tcpNoDelay());
 
     ros::Subscriber imu_sub =
         nh.subscribe<sensor_msgs::Imu>("/mavros/imu/data", // Note: do NOT change it to /mavros/imu/data_raw !!!
@@ -70,16 +71,15 @@ int main(int argc, char *argv[])
                                                 ros::TransportHints().tcpNoDelay());
 
     ros::Subscriber takeoff_land_sub =
-        nh.subscribe<quadrotor_msgs::TakeoffLand>("takeoff_land",
-                                                  100,
-                                                  boost::bind(&Takeoff_Land_Data_t::feed, &fsm.takeoff_land_data, _1),
-                                                  ros::VoidConstPtr(),
-                                                  ros::TransportHints().tcpNoDelay());
+        nh.subscribe<std_msgs::Bool>("takeoff_land",
+                                     100,
+                                     boost::bind(&Takeoff_Land_Data_t::feed, &fsm.takeoff_land_data, _1),
+                                     ros::VoidConstPtr(),
+                                     ros::TransportHints().tcpNoDelay());
 
     fsm.ctrl_FCU_pub = nh.advertise<mavros_msgs::AttitudeTarget>("/mavros/setpoint_raw/attitude", 10);
-    fsm.traj_start_trigger_pub = nh.advertise<geometry_msgs::PoseStamped>("/traj_start_trigger", 10);
 
-    fsm.debug_pub = nh.advertise<quadrotor_msgs::Px4ctrlDebug>("/debugPx4ctrl", 10); // debug
+    fsm.debug_pub = nh.advertise<std_msgs::Float64MultiArray>("/debugPx4ctrl", 10); // debug
 
     fsm.set_FCU_mode_srv = nh.serviceClient<mavros_msgs::SetMode>("/mavros/set_mode");
     fsm.arming_client_srv = nh.serviceClient<mavros_msgs::CommandBool>("/mavros/cmd/arming");

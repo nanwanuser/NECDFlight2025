@@ -73,7 +73,7 @@ void PX4CtrlFSM::process()
 
 			ROS_INFO("\033[32m[px4ctrl] MANUAL_CTRL(L1) --> AUTO_HOVER(L2)\033[32m");
 		}
-		else if (param.takeoff_land.enable && takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::TAKEOFF) // Try to jump to AUTO_TAKEOFF
+else if (param.takeoff_land.enable && takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == true) // Try to jump to AUTO_TAKEOFF
 		{
 			if (!odom_is_received(now_time))
 			{
@@ -163,7 +163,7 @@ void PX4CtrlFSM::process()
 				ROS_INFO("\033[32m[px4ctrl] AUTO_HOVER(L2) --> CMD_CTRL(L3)\033[32m");
 			}
 		}
-		else if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::LAND)
+else if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == false)
 		{
 
 			state = AUTO_LAND;
@@ -175,13 +175,12 @@ void PX4CtrlFSM::process()
 		{
 			set_hov_with_rc();
 			des = get_hover_des();
-			if ((rc_data.enter_command_mode) ||
-				(takeoff_land.delay_trigger.first && now_time > takeoff_land.delay_trigger.second))
-			{
-				takeoff_land.delay_trigger.first = false;
-				publish_trigger(odom_data.msg);
-				ROS_INFO("\033[32m[px4ctrl] TRIGGER sent, allow user command.\033[32m");
-			}
+                if ((rc_data.enter_command_mode) ||
+                    (takeoff_land.delay_trigger.first && now_time > takeoff_land.delay_trigger.second))
+                {
+                    takeoff_land.delay_trigger.first = false;
+                    ROS_INFO("\033[32m[px4ctrl] Allow user command.\033[32m");
+                }
 
 			// cout << "des.p=" << des.p.transpose() << endl;
 		}
@@ -210,7 +209,7 @@ void PX4CtrlFSM::process()
 			des = get_cmd_des();
 		}
 
-		if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::LAND)
+if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == false)
 		{
 			ROS_ERROR("[px4ctrl] Reject AUTO_LAND, which must be triggered in AUTO_HOVER. \
 					Stop sending control commands for longer than %fs to let px4ctrl return to AUTO_HOVER first.",
@@ -314,9 +313,9 @@ void PX4CtrlFSM::process()
 	}
 	else
 	{
-		debug_msg = controller.calculateControl(des, odom_data, imu_data, u);
-		debug_msg.header.stamp = now_time;
-		debug_pub.publish(debug_msg);
+debug_msg = controller.calculateControl(des, odom_data, imu_data, u);
+std_msgs::Float64MultiArray debug_msg_ros = debug_msg.toMsg();
+debug_pub.publish(debug_msg_ros);
 	}
 
 	// STEP4: publish control commands to mavros
@@ -401,8 +400,8 @@ Desired_State_t PX4CtrlFSM::get_hover_des()
 	des.v = Eigen::Vector3d::Zero();
 	des.a = Eigen::Vector3d::Zero();
 	des.j = Eigen::Vector3d::Zero();
-	des.yaw = hover_pose(3);
-	des.yaw_rate = 0.0;
+	// No yaw control - keep current orientation
+	des.q = odom_data.q;
 
 	return des;
 }
@@ -414,8 +413,8 @@ Desired_State_t PX4CtrlFSM::get_cmd_des()
 	des.v = cmd_data.v;
 	des.a = cmd_data.a;
 	des.j = cmd_data.j;
-	des.yaw = cmd_data.yaw;
-	des.yaw_rate = cmd_data.yaw_rate;
+	// No yaw control - keep current orientation
+	des.q = odom_data.q;
 
 	return des;
 }
@@ -435,8 +434,8 @@ Desired_State_t PX4CtrlFSM::get_rotor_speed_up_des(const ros::Time now)
 	des.v = Eigen::Vector3d::Zero();
 	des.a = Eigen::Vector3d(0, 0, des_a_z);
 	des.j = Eigen::Vector3d::Zero();
-	des.yaw = takeoff_land.start_pose(3);
-	des.yaw_rate = 0.0;
+	// No yaw control - keep current orientation
+	des.q = odom_data.q;
 
 	return des;
 }
@@ -454,8 +453,8 @@ Desired_State_t PX4CtrlFSM::get_takeoff_land_des(const double speed)
 	des.v = Eigen::Vector3d(0, 0, speed);
 	des.a = Eigen::Vector3d::Zero();
 	des.j = Eigen::Vector3d::Zero();
-	des.yaw = takeoff_land.start_pose(3);
-	des.yaw_rate = 0.0;
+	// No yaw control - keep current orientation
+	des.q = odom_data.q;
 
 	return des;
 }
@@ -477,7 +476,8 @@ void PX4CtrlFSM::set_hov_with_rc()
 	hover_pose(0) += rc_data.ch[1] * param.max_manual_vel * delta_t * (param.rc_reverse.pitch ? 1 : -1);
 	hover_pose(1) += rc_data.ch[0] * param.max_manual_vel * delta_t * (param.rc_reverse.roll ? 1 : -1);
 	hover_pose(2) += rc_data.ch[2] * param.max_manual_vel * delta_t * (param.rc_reverse.throttle ? 1 : -1);
-	hover_pose(3) += rc_data.ch[3] * param.max_manual_vel * delta_t * (param.rc_reverse.yaw ? 1 : -1);
+	// Remove yaw control
+	// hover_pose(3) += rc_data.ch[3] * param.max_manual_vel * delta_t * (param.rc_reverse.yaw ? 1 : -1);
 
 	if (hover_pose(2) < -0.3)
 		hover_pose(2) = -0.3;
@@ -576,14 +576,6 @@ void PX4CtrlFSM::publish_attitude_ctrl(const Controller_Output_t &u, const ros::
 	ctrl_FCU_pub.publish(msg);
 }
 
-void PX4CtrlFSM::publish_trigger(const nav_msgs::Odometry &odom_msg)
-{
-	geometry_msgs::PoseStamped msg;
-	msg.header.frame_id = "world";
-	msg.pose = odom_msg.pose.pose;
-
-	traj_start_trigger_pub.publish(msg);
-}
 
 bool PX4CtrlFSM::toggle_offboard_mode(bool on_off)
 {

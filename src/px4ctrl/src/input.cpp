@@ -112,8 +112,13 @@ void RC_Data_t::check_validity()
 
 bool RC_Data_t::check_centered()
 {
-    bool centered = abs(ch[0]) < 1e-5 && abs(ch[0]) < 1e-5 && abs(ch[0]) < 1e-5 && abs(ch[0]) < 1e-5;
+    bool centered = abs(ch[0]) < 1e-5 && abs(ch[1]) < 1e-5 && abs(ch[2]) < 1e-5 && abs(ch[3]) < 1e-5;
     return centered;
+}
+
+bool RC_Data_t::is_received(const ros::Time &now_time)
+{
+    return (now_time - rcv_stamp).toSec() < 0.5;
 }
 
 Odom_Data_t::Odom_Data_t()
@@ -223,32 +228,20 @@ Command_Data_t::Command_Data_t()
     rcv_stamp = ros::Time(0);
 }
 
-void Command_Data_t::feed(quadrotor_msgs::PositionCommandConstPtr pMsg)
+void Command_Data_t::feed(geometry_msgs::PoseStampedConstPtr pMsg)
 {
-
     msg = *pMsg;
     rcv_stamp = ros::Time::now();
 
-    p(0) = msg.position.x;
-    p(1) = msg.position.y;
-    p(2) = msg.position.z;
+    // Extract position from PoseStamped message
+    p(0) = msg.pose.position.x;
+    p(1) = msg.pose.position.y;
+    p(2) = msg.pose.position.z;
 
-    v(0) = msg.velocity.x;
-    v(1) = msg.velocity.y;
-    v(2) = msg.velocity.z;
-
-    a(0) = msg.acceleration.x;
-    a(1) = msg.acceleration.y;
-    a(2) = msg.acceleration.z;
-
-    j(0) = msg.jerk.x;
-    j(1) = msg.jerk.y;
-    j(2) = msg.jerk.z;
-
-    // std::cout << "j1=" << j.transpose() << std::endl;
-
-    yaw = uav_utils::normalize_angle(msg.yaw);
-    yaw_rate = msg.yaw_dot;
+    // Set velocity, acceleration and jerk to zero (pure position control)
+    v = Eigen::Vector3d::Zero();
+    a = Eigen::Vector3d::Zero();
+    j = Eigen::Vector3d::Zero();
 }
 
 Battery_Data_t::Battery_Data_t()
@@ -296,12 +289,12 @@ Takeoff_Land_Data_t::Takeoff_Land_Data_t()
     rcv_stamp = ros::Time(0);
 }
 
-void Takeoff_Land_Data_t::feed(quadrotor_msgs::TakeoffLandConstPtr pMsg)
+void Takeoff_Land_Data_t::feed(std_msgs::BoolConstPtr pMsg)
 {
 
     msg = *pMsg;
     rcv_stamp = ros::Time::now();
 
     triggered = true;
-    takeoff_land_cmd = pMsg->takeoff_land_cmd;
+    takeoff_land_cmd = pMsg->data;
 }
