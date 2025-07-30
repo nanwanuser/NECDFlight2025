@@ -137,7 +137,7 @@ int main(int argc, char** argv)
 
     highodometry odometer(n);
     
-    ros::Timer timer = n.createTimer(ros::Duration(0.01), &highodometry::pubOptData, &odometer);
+    ros::Timer timer = n.createTimer(ros::Duration(0.008), &highodometry::pubOptData, &odometer);
 
     ros::spin();
     return 0;
