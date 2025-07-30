@@ -3,7 +3,7 @@
 #########################################################################
 
 mass        : 1.2 # kg 
-gra         : 9.81 
+gra         : 9.81
 pose_solver : 1     # 0:From ZhepeiWang (drag & less singular) 1:From ZhepeiWang, 2:From rotor-drag    
 ctrl_freq_max   : 100.0
 use_bodyrate_ctrl: false
@@ -22,10 +22,10 @@ auto_takeoff_land:
     enable_auto_arm: true
     no_RC: true
     takeoff_height: 1.0 # m
-    takeoff_land_speed: 0.3 # m/s
+    takeoff_land_speed: 0.4 # m/s - Increased for more reliable landing
 
-thrust_model: # The model that maps thrust signal u(0~1) to real thrust force F(Unit:N): F=K1*Voltage^K2*(K3*u^2+(1-K3)*u). 
-    print_value: false # display the value of “thr_scale_compensate” or “hover_percentage” during thrust model estimating.
+thrust_model: # The model that maps thrust signal u(0~1) to real thrust force F(Unit:N): F=K1*Voltage^K2*(K3*u^2+(1-K3)*u).
+    print_value: false # display the value of "thr_scale_compensate" or "hover_percentage" during thrust model estimating.
     accurate_thrust_model: false  # This can always enabled if don't require accurate control performance :-)
     # accurate thrust mapping parameters
     K1: 0.7583 # Needs precise calibration!
@@ -34,7 +34,7 @@ thrust_model: # The model that maps thrust signal u(0~1) to real thrust force F(
     # approximate thrust mapping parameters
     hover_percentage: 0.60  # Thrust percentage in Stabilize/Arco mode # *
 
-gain: 
+gain:
     # Cascade PID controller. Recommend to read the code.
     Kp0: 2
     Kp1: 2
@@ -54,7 +54,7 @@ gain:
     KAngP: 20.0
     KAngY: 20.0
 
-rotor_drag:  
+rotor_drag:
     x: 0.0  # The reduced acceleration on each axis caused by rotor drag. Unit:(m*s^-2)/(m*s^-1).
     y: 0.0  # Same as above
     z: 0.0  # Same as above

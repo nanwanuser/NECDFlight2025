@@ -73,7 +73,7 @@ void PX4CtrlFSM::process()
 
 			ROS_INFO("\033[32m[px4ctrl] MANUAL_CTRL(L1) --> AUTO_HOVER(L2)\033[32m");
 		}
-else if (param.takeoff_land.enable && takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == true) // Try to jump to AUTO_TAKEOFF
+		else if (param.takeoff_land.enable && takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == true) // Try to jump to AUTO_TAKEOFF
 		{
 			if (!odom_is_received(now_time))
 			{
@@ -163,24 +163,38 @@ else if (param.takeoff_land.enable && takeoff_land_data.triggered && takeoff_lan
 				ROS_INFO("\033[32m[px4ctrl] AUTO_HOVER(L2) --> CMD_CTRL(L3)\033[32m");
 			}
 		}
-else if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == false)
+		else if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == false)
 		{
-
 			state = AUTO_LAND;
-			set_start_pose_for_takeoff_land(odom_data);
+			takeoff_land.toggle_takeoff_land_time = now_time;
 
-			ROS_INFO("\033[32m[px4ctrl] AUTO_HOVER(L2) --> AUTO_LAND\033[32m");
+			// Initialize landing parameters for 45-degree descent to origin
+			takeoff_land.landing_start_pos = odom_data.p;
+
+			// Calculate horizontal distance to origin
+			double horizontal_distance = sqrt(odom_data.p(0) * odom_data.p(0) + odom_data.p(1) * odom_data.p(1));
+			double vertical_distance = odom_data.p(2);
+
+			// Calculate landing duration based on the larger distance to ensure safe speed
+			double max_distance = std::max(horizontal_distance, vertical_distance);
+			takeoff_land.landing_duration = max_distance / param.takeoff_land.speed;
+
+			ROS_INFO("\033[32m[px4ctrl] AUTO_HOVER(L2) --> AUTO_LAND (45-degree to origin)\033[32m");
+			ROS_INFO("[px4ctrl] Landing from position: [%.2f, %.2f, %.2f] to origin",
+					 odom_data.p(0), odom_data.p(1), odom_data.p(2));
+			ROS_INFO("[px4ctrl] Horizontal distance: %.2fm, Vertical distance: %.2fm, Duration: %.2fs",
+					 horizontal_distance, vertical_distance, takeoff_land.landing_duration);
 		}
 		else
 		{
 			set_hov_with_rc();
 			des = get_hover_des();
-                if ((rc_data.enter_command_mode) ||
-                    (takeoff_land.delay_trigger.first && now_time > takeoff_land.delay_trigger.second))
-                {
-                    takeoff_land.delay_trigger.first = false;
-                    ROS_INFO("\033[32m[px4ctrl] Allow user command.\033[32m");
-                }
+			if ((rc_data.enter_command_mode) ||
+				(takeoff_land.delay_trigger.first && now_time > takeoff_land.delay_trigger.second))
+			{
+				takeoff_land.delay_trigger.first = false;
+				ROS_INFO("\033[32m[px4ctrl] Allow user command.\033[32m");
+			}
 
 			// cout << "des.p=" << des.p.transpose() << endl;
 		}
@@ -209,7 +223,7 @@ else if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == fa
 			des = get_cmd_des();
 		}
 
-if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == false)
+		if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == false)
 		{
 			ROS_ERROR("[px4ctrl] Reject AUTO_LAND, which must be triggered in AUTO_HOVER. \
 					Stop sending control commands for longer than %fs to let px4ctrl return to AUTO_HOVER first.",
@@ -260,7 +274,8 @@ if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == false)
 		}
 		else if (!get_landed())
 		{
-			des = get_takeoff_land_des(-param.takeoff_land.speed);
+			// Use new 45-degree landing trajectory to origin
+			des = get_land_to_origin_des(now_time);
 		}
 		else
 		{
@@ -269,7 +284,7 @@ if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == false)
 			static bool print_once_flag = true;
 			if (print_once_flag)
 			{
-				ROS_INFO("\033[32m[px4ctrl] Wait for abount 10s to let the drone arm.\033[32m");
+				ROS_INFO("\033[32m[px4ctrl] Landed! Waiting for disarm...\033[32m");
 				print_once_flag = false;
 			}
 
@@ -313,9 +328,9 @@ if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == false)
 	}
 	else
 	{
-debug_msg = controller.calculateControl(des, odom_data, imu_data, u);
-std_msgs::Float64MultiArray debug_msg_ros = debug_msg.toMsg();
-debug_pub.publish(debug_msg_ros);
+		debug_msg = controller.calculateControl(des, odom_data, imu_data, u);
+		std_msgs::Float64MultiArray debug_msg_ros = debug_msg.toMsg();
+		debug_pub.publish(debug_msg_ros);
 	}
 
 	// STEP4: publish control commands to mavros
@@ -363,9 +378,9 @@ void PX4CtrlFSM::land_detector(const State_t state, const Desired_State_t &des, 
 	}
 
 	// land_detector parameters
-	constexpr double POSITION_DEVIATION_C = -0.5; // Constraint 1: target position below real position for POSITION_DEVIATION_C meters.
-	constexpr double VELOCITY_THR_C = 0.1;		  // Constraint 2: velocity below VELOCITY_MIN_C m/s.
-	constexpr double TIME_KEEP_C = 3.0;			  // Constraint 3: Time(s) the Constraint 1&2 need to keep.
+	constexpr double POSITION_DEVIATION_C = -0.2; // Constraint 1: target position below real position for POSITION_DEVIATION_C meters.
+	constexpr double VELOCITY_THR_C = 0.2;		  // Constraint 2: velocity below VELOCITY_MIN_C m/s.
+	constexpr double TIME_KEEP_C = 2.0;			  // Constraint 3: Time(s) the Constraint 1&2 need to keep.
 
 	static ros::Time time_C12_reached; // time_Constraints12_reached
 	static bool is_last_C12_satisfy;
@@ -455,6 +470,83 @@ Desired_State_t PX4CtrlFSM::get_takeoff_land_des(const double speed)
 	des.j = Eigen::Vector3d::Zero();
 	// No yaw control - keep current orientation
 	des.q = odom_data.q;
+
+	return des;
+}
+
+Desired_State_t PX4CtrlFSM::get_land_to_origin_des(const ros::Time &now)
+{
+	double elapsed_time = (now - takeoff_land.toggle_takeoff_land_time).toSec();
+
+	Desired_State_t des;
+
+	// Phase 1: 45-degree descent to origin (x=0, y=0)
+	if (elapsed_time <= takeoff_land.landing_duration)
+	{
+		// Calculate progress ratio (0 to 1)
+		double progress = elapsed_time / takeoff_land.landing_duration;
+
+		// Linear interpolation from start position to origin
+		des.p = takeoff_land.landing_start_pos * (1.0 - progress);
+
+		// Calculate velocities to maintain constant speed toward origin
+		if (takeoff_land.landing_duration > 0.001) // Avoid division by zero
+		{
+			des.v = -takeoff_land.landing_start_pos / takeoff_land.landing_duration;
+		}
+		else
+		{
+			des.v = Eigen::Vector3d::Zero();
+		}
+	}
+	// Phase 2: Vertical descent after reaching origin horizontally
+	else
+	{
+		// Keep x and y at origin
+		des.p(0) = 0.0;
+		des.p(1) = 0.0;
+
+		// Continue descending vertically
+		double vertical_time = elapsed_time - takeoff_land.landing_duration;
+		double current_height = takeoff_land.landing_start_pos(2) * (1.0 - takeoff_land.landing_duration / takeoff_land.landing_duration);
+
+		// If we still have height, continue descending
+		if (current_height > -1.0) // Allow going below 0 to ensure landing
+		{
+			des.p(2) = current_height - param.takeoff_land.speed * vertical_time;
+			des.v = Eigen::Vector3d(0, 0, -param.takeoff_land.speed);
+		}
+		else
+		{
+			des.p(2) = -1.0; // Target below ground to ensure landing detection
+			des.v = Eigen::Vector3d(0, 0, -param.takeoff_land.speed * 0.5); // Slower descent near ground
+		}
+	}
+
+	// No acceleration or jerk for linear trajectory
+	des.a = Eigen::Vector3d::Zero();
+	des.j = Eigen::Vector3d::Zero();
+
+	// Keep current orientation
+	des.q = odom_data.q;
+
+	// Print debug info periodically
+	static ros::Time last_print_time = ros::Time(0);
+	if ((now - last_print_time).toSec() > 1.0)
+	{
+		if (elapsed_time <= takeoff_land.landing_duration)
+		{
+			double progress = elapsed_time / takeoff_land.landing_duration;
+			ROS_INFO("[px4ctrl] Phase 1 - 45deg descent: %.1f%%, Position: [%.2f, %.2f, %.2f], Velocity: [%.2f, %.2f, %.2f]",
+					 progress * 100.0, des.p(0), des.p(1), des.p(2), des.v(0), des.v(1), des.v(2));
+		}
+		else
+		{
+			ROS_INFO("[px4ctrl] Phase 2 - Vertical descent: Position: [%.2f, %.2f, %.2f], Velocity: [%.2f, %.2f, %.2f]",
+					 des.p(0), des.p(1), des.p(2), des.v(0), des.v(1), des.v(2));
+		}
+		last_print_time = now;
+	}
 
 	return des;
 }

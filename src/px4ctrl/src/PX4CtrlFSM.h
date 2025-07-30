@@ -21,6 +21,10 @@ struct AutoTakeoffLand_t
 	std::pair<bool, ros::Time> delay_trigger{std::pair<bool, ros::Time>(false, ros::Time(0))};
 	Eigen::Vector4d start_pose;
 	
+	// For 45-degree landing
+	Eigen::Vector3d landing_start_pos;
+	double landing_duration; // Total time for landing to origin
+
 	static constexpr double MOTORS_SPEEDUP_TIME = 3.0; // motors idle running for 3 seconds before takeoff
 	static constexpr double DELAY_TRIGGER_TIME = 2.0;  // Time to be delayed when reach at target height
 };
@@ -41,13 +45,13 @@ public:
 
 	LinearControl &controller;
 
-ros::Publisher ctrl_FCU_pub;
+	ros::Publisher ctrl_FCU_pub;
 	ros::Publisher debug_pub; //debug
 	ros::ServiceClient set_FCU_mode_srv;
 	ros::ServiceClient arming_client_srv;
 	ros::ServiceClient reboot_FCU_srv;
 
-Px4ctrlDebug_t debug_msg; //debug
+	Px4ctrlDebug_t debug_msg; //debug
 
 	Eigen::Vector4d hover_pose;
 	ros::Time last_set_hover_pose_time;
@@ -82,10 +86,11 @@ private:
 
 	// ---- auto takeoff/land ----
 	void motors_idling(const Imu_Data_t &imu, Controller_Output_t &u);
-	void land_detector(const State_t state, const Desired_State_t &des, const Odom_Data_t &odom); // Detect landing 
+	void land_detector(const State_t state, const Desired_State_t &des, const Odom_Data_t &odom); // Detect landing
 	void set_start_pose_for_takeoff_land(const Odom_Data_t &odom);
 	Desired_State_t get_rotor_speed_up_des(const ros::Time now);
 	Desired_State_t get_takeoff_land_des(const double speed);
+	Desired_State_t get_land_to_origin_des(const ros::Time &now); // New function for 45-degree landing
 
 	// ---- tools ----
 	void set_hov_with_odom();
@@ -95,8 +100,8 @@ private:
 	bool toggle_arm_disarm(bool arm); // It will only try to toggle once, so not blocked.
 	void reboot_FCU();
 
-void publish_bodyrate_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
-void publish_attitude_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
+	void publish_bodyrate_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
+	void publish_attitude_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
 };
 
 #endif
