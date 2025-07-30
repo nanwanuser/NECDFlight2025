@@ -54,23 +54,37 @@ find_package(catkin REQUIRED COMPONENTS
   livox_ros_driver2
   message_generation
   eigen_conversions
+  cv_bridge
+  genmsg 
 )
 
 find_package(Eigen3 REQUIRED)
-find_package(PCL 1.8 REQUIRED)
+find_package(PCL 1.10 REQUIRED)
+find_package(OpenMP REQUIRED)
+#find_package(GTSAM REQUIRED QUIET)
+# find_package(OpenCV REQUIRED)
+# find_package(Boost REQUIRED COMPONENTS serialization timer thread chrono)
+# find_package(GeograpicLib REQUIRED)
+
+
 
 message(Eigen: ${EIGEN3_INCLUDE_DIR})
-
+#include_directories("/usr/include/pcl-1.11/pcl")
 include_directories(
 	${catkin_INCLUDE_DIRS} 
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
+  #${GTSAM_INCLUDE_DIR}
+  # ${GeograpicLib_INCLUDE_DIRS}
   ${PYTHON_INCLUDE_DIRS}
+  # ${Boost_INCLUDE_DIRS}
   include)
-
+  link_directories(${PCL_LIBRARY_DIRS})
+  add_definitions(${PCL_DEFINITIONS})
 add_message_files(
   FILES
   Pose6D.msg
+  optimization.msg
 )
 
 generate_messages(
@@ -80,10 +94,15 @@ generate_messages(
 
 catkin_package(
   CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime
-  DEPENDS EIGEN3 PCL
+  DEPENDS EIGEN3 PCL 
   INCLUDE_DIRS
 )
 
 add_executable(fastlio_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
 target_link_libraries(fastlio_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES})
 target_include_directories(fastlio_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
+
+
+add_executable(highodometry src/highFreodo.cpp)
+target_link_libraries(highodometry ${catkin_LIBRARIES})
+# target_include_directories(highodometry PRIVATE ${PYTHON_INCLUDE_DIRS})

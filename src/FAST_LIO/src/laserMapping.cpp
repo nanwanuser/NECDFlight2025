@@ -59,6 +59,7 @@
 #include <livox_ros_driver2/CustomMsg.h>
 #include "preprocess.h"
 #include <ikd-Tree/ikd_Tree.h>
+#include   "fast_lio/optimization.h"
 
 #define INIT_TIME           (0.1)
 #define LASER_POINT_COV     (0.001)
@@ -94,7 +95,6 @@ int    iterCount = 0, feats_down_size = 0, NUM_MAX_ITERATIONS = 0, laserCloudVal
 bool   point_selected_surf[100000] = {0};
 bool   lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool   scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
-int lidar_type;
 
 vector<vector<int>>  pointSearchInd_surf; 
 vector<BoxPointType> cub_needrm;
@@ -136,6 +136,7 @@ nav_msgs::Path path;
 nav_msgs::Odometry odomAftMapped;
 geometry_msgs::Quaternion geoQuat;
 geometry_msgs::PoseStamped msg_body_pose;
+fast_lio::optimization optVars;
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
@@ -376,8 +377,6 @@ bool sync_packages(MeasureGroup &meas)
     {
         meas.lidar = lidar_buffer.front();
         meas.lidar_beg_time = time_buffer.front();
-
-
         if (meas.lidar->points.size() <= 1) // time too little
         {
             lidar_end_time = meas.lidar_beg_time + lidar_mean_scantime;
@@ -393,8 +392,6 @@ bool sync_packages(MeasureGroup &meas)
             lidar_end_time = meas.lidar_beg_time + meas.lidar->points.back().curvature / double(1000);
             lidar_mean_scantime += (meas.lidar->points.back().curvature / double(1000) - lidar_mean_scantime) / scan_num;
         }
-        if(lidar_type == MARSIM)
-            lidar_end_time = meas.lidar_beg_time;
 
         meas.lidar_end_time = lidar_end_time;
 
@@ -493,7 +490,8 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
         sensor_msgs::PointCloud2 laserCloudmsg;
         pcl::toROSMsg(*laserCloudWorld, laserCloudmsg);
         laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
-        laserCloudmsg.header.frame_id = "odom";
+        // laserCloudmsg.header.frame_id = "camera_init";
+        laserCloudmsg.header.frame_id = "world";
         pubLaserCloudFull.publish(laserCloudmsg);
         publish_count -= PUBFRAME_PERIOD;
     }
@@ -543,7 +541,7 @@ void publish_frame_body(const ros::Publisher & pubLaserCloudFull_body)
     sensor_msgs::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laserCloudIMUBody, laserCloudmsg);
     laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
-    laserCloudmsg.header.frame_id = "base_link";
+    laserCloudmsg.header.frame_id = "body";
     pubLaserCloudFull_body.publish(laserCloudmsg);
     publish_count -= PUBFRAME_PERIOD;
 }
@@ -560,7 +558,8 @@ void publish_effect_world(const ros::Publisher & pubLaserCloudEffect)
     sensor_msgs::PointCloud2 laserCloudFullRes3;
     pcl::toROSMsg(*laserCloudWorld, laserCloudFullRes3);
     laserCloudFullRes3.header.stamp = ros::Time().fromSec(lidar_end_time);
-    laserCloudFullRes3.header.frame_id = "odom";
+    // laserCloudFullRes3.header.frame_id = "camera_init";
+    laserCloudFullRes3.header.frame_id = "world";
     pubLaserCloudEffect.publish(laserCloudFullRes3);
 }
 
@@ -569,7 +568,8 @@ void publish_map(const ros::Publisher & pubLaserCloudMap)
     sensor_msgs::PointCloud2 laserCloudMap;
     pcl::toROSMsg(*featsFromMap, laserCloudMap);
     laserCloudMap.header.stamp = ros::Time().fromSec(lidar_end_time);
-    laserCloudMap.header.frame_id = "odom";
+    // laserCloudMap.header.frame_id = "camera_init";
+    laserCloudMap.header.frame_id = "world";
     pubLaserCloudMap.publish(laserCloudMap);
 }
 
@@ -588,8 +588,9 @@ void set_posestamp(T & out)
 
 void publish_odometry(const ros::Publisher & pubOdomAftMapped)
 {
-    odomAftMapped.header.frame_id = "odom";
-    odomAftMapped.child_frame_id = "base_link";
+    // odomAftMapped.header.frame_id = "camera_init";
+    odomAftMapped.header.frame_id = "world";
+    odomAftMapped.child_frame_id = "body";
     odomAftMapped.header.stamp = ros::Time().fromSec(lidar_end_time);// ros::Time().fromSec(lidar_end_time);
     set_posestamp(odomAftMapped.pose);
     pubOdomAftMapped.publish(odomAftMapped);
@@ -616,14 +617,16 @@ void publish_odometry(const ros::Publisher & pubOdomAftMapped)
     q.setY(odomAftMapped.pose.pose.orientation.y);
     q.setZ(odomAftMapped.pose.pose.orientation.z);
     transform.setRotation( q );
-    br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "odom", "base_link" ) );
+    // br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "camera_init", "body" ) );
+    br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "world", "body" ) );
 }
 
 void publish_path(const ros::Publisher pubPath)
 {
     set_posestamp(msg_body_pose);
     msg_body_pose.header.stamp = ros::Time().fromSec(lidar_end_time);
-    msg_body_pose.header.frame_id = "odom";
+    // msg_body_pose.header.frame_id = "camera_init";
+    msg_body_pose.header.frame_id = "world";
 
     /*** if path is too large, the rvis will crash ***/
     static int jjj = 0;
@@ -779,7 +782,7 @@ int main(int argc, char** argv)
     nh.param<double>("mapping/b_gyr_cov",b_gyr_cov,0.0001);
     nh.param<double>("mapping/b_acc_cov",b_acc_cov,0.0001);
     nh.param<double>("preprocess/blind", p_pre->blind, 0.01);
-    nh.param<int>("preprocess/lidar_type", lidar_type, AVIA);
+    nh.param<int>("preprocess/lidar_type", p_pre->lidar_type, AVIA);
     nh.param<int>("preprocess/scan_line", p_pre->N_SCANS, 16);
     nh.param<int>("preprocess/timestamp_unit", p_pre->time_unit, US);
     nh.param<int>("preprocess/scan_rate", p_pre->SCAN_RATE, 10);
@@ -791,12 +794,11 @@ int main(int argc, char** argv)
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);
     nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>());
     nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>());
-
-    p_pre->lidar_type = lidar_type;
     cout<<"p_pre->lidar_type "<<p_pre->lidar_type<<endl;
     
     path.header.stamp    = ros::Time::now();
-    path.header.frame_id ="odom";
+    path.header.frame_id ="world";
+    // path.header.frame_id ="camera_init";
 
     /*** variables definition ***/
     int effect_feat_num = 0, frame_num = 0;
@@ -822,13 +824,13 @@ int main(int argc, char** argv)
     p_imu->set_acc_cov(V3D(acc_cov, acc_cov, acc_cov));
     p_imu->set_gyr_bias_cov(V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
     p_imu->set_acc_bias_cov(V3D(b_acc_cov, b_acc_cov, b_acc_cov));
-    p_imu->lidar_type = lidar_type;
+
     double epsi[23] = {0.001};
     fill(epsi, epsi+23, 0.001);
     kf.init_dyn_share(get_f, df_dx, df_dw, h_share_model, NUM_MAX_ITERATIONS, epsi);
 
     /*** debug record ***/
-    FILE *fp;
+     FILE *fp;
     string pos_log_dir = root_dir + "/Log/pos_log.txt";
     fp = fopen(pos_log_dir.c_str(),"w");
 
@@ -855,9 +857,12 @@ int main(int argc, char** argv)
     ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>
             ("/Laser_map", 100000);
     ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> 
-            ("/mavros/odometry/out", 100000);
+            ("/Odometry", 100000);
     ros::Publisher pubPath          = nh.advertise<nav_msgs::Path> 
             ("/path", 100000);
+
+    ros::Publisher optvarPub = nh.advertise<fast_lio::optimization>("OptVars", 10);
+    
 //------------------------------------------------------------------------------------------------------
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);
@@ -970,7 +975,17 @@ int main(int argc, char** argv)
 
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped);
-
+            Eigen::Vector3d imu_rot = SO3ToEuler(state_point.rot);
+            Eigen::Matrix<double, 3, 1, Eigen::AutoAlign> grav =  state_point.grav.get_vect();
+            //pub-->vel, ba, bg, g, R
+            for(int i=0;i<3;i++){
+                optVars.v[i] = state_point.vel(i);
+                optVars.ba[i] = state_point.ba(i);
+                optVars.bg[i] = state_point.bg(i);
+                optVars.g[i] = grav(i);
+                optVars.R[i] = imu_rot(i);
+            }
+            optvarPub.publish(optVars);
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();
             map_incremental();
@@ -981,7 +996,7 @@ int main(int argc, char** argv)
             if (scan_pub_en || pcd_save_en)      publish_frame_world(pubLaserCloudFull);
             if (scan_pub_en && scan_body_pub_en) publish_frame_body(pubLaserCloudFull_body);
             // publish_effect_world(pubLaserCloudEffect);
-            // publish_map(pubLaserCloudMap);
+            publish_map(pubLaserCloudMap);
 
             /*** Debug variables ***/
             if (runtime_pos_log)
