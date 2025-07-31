@@ -10,10 +10,24 @@ find_package(catkin REQUIRED COMPONENTS
         std_msgs
         geometry_msgs
         serial
+        message_generation
 )
 
 ## System dependencies
 find_package(Boost REQUIRED COMPONENTS system thread)
+
+## Generate messages in the 'msg' folder
+add_message_files(
+        FILES
+        AnimalData.msg
+)
+
+## Generate added messages and services with any dependencies listed here
+generate_messages(
+        DEPENDENCIES
+        std_msgs
+        geometry_msgs
+)
 
 ###################################
 ## catkin specific configuration ##
@@ -21,7 +35,7 @@ find_package(Boost REQUIRED COMPONENTS system thread)
 catkin_package(
         INCLUDE_DIRS include
         LIBRARIES ground_station_comm
-        CATKIN_DEPENDS roscpp std_msgs geometry_msgs serial
+        CATKIN_DEPENDS roscpp std_msgs geometry_msgs serial message_runtime
         DEPENDS Boost
 )
 

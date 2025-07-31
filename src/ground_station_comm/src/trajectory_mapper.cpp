@@ -9,6 +9,7 @@
 
 #include "ground_station_comm/trajectory_mapper.hpp"
 #include <ros/ros.h>
+#include <cmath>
 
 namespace GroundStation {
 
@@ -86,6 +87,64 @@ std::vector<geometry_msgs::PoseStamped> TrajectoryMapper::parseTrajectory(const 
     ROS_INFO("Parsed trajectory with %zu waypoints", waypoints_.size());
 
     return waypoints_;
+}
+
+/**
+ * @brief 根据当前位置找到当前所在的网格标号
+ */
+uint8_t TrajectoryMapper::positionToGridNumber(const geometry_msgs::Point& position) {
+    // 检查是否在网格范围内
+    if (position.x < 0 || position.x > (GRID_HEIGHT - 1) * GRID_SIZE ||
+        position.y < 0 || position.y > (GRID_WIDTH - 1) * GRID_SIZE) {
+        return 0;  // 不在网格内
+    }
+
+    // 计算行列索引
+    int row = static_cast<int>(position.x / GRID_SIZE);
+    int col = static_cast<int>(position.y / GRID_SIZE);
+
+    // 边界检查
+    if (row >= GRID_HEIGHT) row = GRID_HEIGHT - 1;
+    if (col >= GRID_WIDTH) col = GRID_WIDTH - 1;
+
+    // 计算网格标号
+    return static_cast<uint8_t>(row * GRID_WIDTH + col + 1);
+}
+
+/**
+ * @brief 获取网格中心位置
+ */
+geometry_msgs::Point TrajectoryMapper::getGridCenter(uint8_t grid_number) {
+    geometry_msgs::Point center;
+
+    if (grid_number < 1 || grid_number > 63) {
+        center.x = center.y = center.z = 0;
+        return center;
+    }
+
+    int index = grid_number - 1;
+    int row = index / GRID_WIDTH;
+    int col = index % GRID_WIDTH;
+
+    // 网格中心位置
+    center.x = row * GRID_SIZE + GRID_SIZE / 2.0;
+    center.y = col * GRID_SIZE + GRID_SIZE / 2.0;
+    center.z = HEIGHT;
+
+    return center;
+}
+
+/**
+ * @brief 检查位置是否接近网格边界
+ */
+bool TrajectoryMapper::isNearGridBoundary(const geometry_msgs::Point& position, double threshold) {
+    // 获取当前网格的边界
+    double x_mod = fmod(position.x, GRID_SIZE);
+    double y_mod = fmod(position.y, GRID_SIZE);
+
+    // 检查是否接近任何边界
+    return (x_mod < threshold || x_mod > (GRID_SIZE - threshold) ||
+            y_mod < threshold || y_mod > (GRID_SIZE - threshold));
 }
 
 } // namespace GroundStation

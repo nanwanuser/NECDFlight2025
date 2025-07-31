@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    ground_station_node.cpp
   * @brief   地面站通信ROS节点
-  * @version V1.0.0
+  * @version V2.0.0
   * @date    2025-07-31
   ******************************************************************************
   */
@@ -14,9 +14,12 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <set>
+#include <cmath>
 
 #include "ground_station_comm/data_communication_pkg.hpp"
 #include "ground_station_comm/trajectory_mapper.hpp"
+#include "ground_station_comm/AnimalData.h"
 
 class GroundStationNode {
 private:
@@ -24,9 +27,12 @@ private:
     ros::NodeHandle nh_;
     ros::NodeHandle pnh_;
     ros::Subscriber pose_sub_;
+    ros::Subscriber animal_sub_;
     ros::Publisher cmd_pub_;
     ros::Publisher takeoff_land_pub_;
+    ros::Publisher start_detect_pub_;
     ros::Timer serial_timer_;
+    ros::Timer control_timer_;
 
     // 串口相关
     std::unique_ptr<serial::Serial> serial_port_;
@@ -42,26 +48,54 @@ private:
     std::mutex waypoints_mutex_;
 
     // 状态管理
+    enum class FlightState {
+        IDLE,                    // 空闲
+        FOLLOWING_TRAJECTORY,    // 按照预定航线飞行
+        SCANNING_GRID,          // 在网格内扫描动物
+        MOVING_TO_NEXT_VECTOR   // 移动到下一个扫描向量
+    };
+
+    std::atomic<FlightState> flight_state_;
     std::atomic<int> current_waypoint_index_;
     std::atomic<bool> is_flying_;
     std::atomic<bool> trajectory_received_;
     geometry_msgs::PoseStamped current_pose_;
     std::mutex pose_mutex_;
 
+    // 动物检测相关
+    ground_station_comm::AnimalData latest_animal_data_;
+    std::mutex animal_data_mutex_;
+    std::atomic<bool> animal_data_received_;
+    std::vector<geometry_msgs::Point> scan_vectors_;  // 扫描向量
+    size_t current_vector_index_;
+    geometry_msgs::Point scan_start_position_;        // 扫描起始位置
+    geometry_msgs::Point current_scan_target_;        // 当前扫描目标位置
+
+    // 已访问网格跟踪
+    std::set<uint8_t> visited_grids_;
+    std::mutex visited_grids_mutex_;
+    uint8_t current_grid_number_;
+
     // 位置到达阈值
     double position_threshold_;
+    static constexpr double GRID_BOUNDARY_THRESHOLD = 0.1;  // 10cm
 
     // 命令定义
     static constexpr uint8_t CMD_TRAJECTORY = 0x01;
     static constexpr uint8_t CMD_TAKEOFF = 0x02;
+    static constexpr uint8_t CMD_ANIMAL_DATA = 0x03;  // 新增：动物数据命令
     static constexpr uint8_t TAKEOFF_DATA = 0x11;
 
 public:
     GroundStationNode() :
         pnh_("~"),
+        flight_state_(FlightState::IDLE),
         current_waypoint_index_(0),
         is_flying_(false),
-        trajectory_received_(false) {
+        trajectory_received_(false),
+        animal_data_received_(false),
+        current_vector_index_(0),
+        current_grid_number_(0) {
 
         // 读取参数
         pnh_.param<std::string>("serial_device", serial_device_, "/dev/ttyUSB0");
@@ -77,12 +111,17 @@ public:
         // 初始化ROS接口
         pose_sub_ = nh_.subscribe("/mavros/local_position/pose", 10,
                                   &GroundStationNode::poseCallback, this);
+        animal_sub_ = nh_.subscribe("/animal", 10,
+                                   &GroundStationNode::animalDataCallback, this);
         cmd_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/position_cmd", 10);
         takeoff_land_pub_ = nh_.advertise<std_msgs::Bool>("/px4ctrl/takeoff_land", 10);
+        start_detect_pub_ = nh_.advertise<std_msgs::Bool>("/start_detect", 10);
 
-        // 定时器读取串口数据
+        // 定时器
         serial_timer_ = nh_.createTimer(ros::Duration(0.01),
                                        &GroundStationNode::serialTimerCallback, this);
+        control_timer_ = nh_.createTimer(ros::Duration(0.1),
+                                        &GroundStationNode::controlTimerCallback, this);
 
         ROS_INFO("Ground Station Node initialized");
     }
@@ -193,6 +232,7 @@ private:
         takeoff_land_pub_.publish(takeoff_msg);
 
         is_flying_ = true;
+        flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
 
         // 如果已有轨迹，发布第一个航点
         if (trajectory_received_ && !waypoints_.empty()) {
@@ -223,6 +263,165 @@ private:
     }
 
     /**
+     * @brief 动物数据回调函数
+     */
+    void animalDataCallback(const ground_station_comm::AnimalData::ConstPtr& msg) {
+        {
+            std::lock_guard<std::mutex> lock(animal_data_mutex_);
+            latest_animal_data_ = *msg;
+            animal_data_received_ = true;
+        }
+
+        // 向地面站发送动物数据
+        sendAnimalDataToGroundStation();
+
+        // 发送 false 到 /start_detect
+        std_msgs::Bool detect_msg;
+        detect_msg.data = false;
+        start_detect_pub_.publish(detect_msg);
+
+        // 检查是否需要进入扫描模式
+        checkAndStartScanning();
+    }
+
+    /**
+     * @brief 向地面站发送动物数据
+     */
+    void sendAnimalDataToGroundStation() {
+        uint8_t data[6];  // 1字节网格标号 + 5字节动物数量
+
+        // 获取当前网格标号
+        geometry_msgs::Point current_position;
+        {
+            std::lock_guard<std::mutex> lock(pose_mutex_);
+            current_position = current_pose_.pose.position;
+        }
+
+        data[0] = trajectory_mapper_.positionToGridNumber(current_position);
+
+        // 添加动物数量
+        {
+            std::lock_guard<std::mutex> lock(animal_data_mutex_);
+            data[1] = latest_animal_data_.peacock;
+            data[2] = latest_animal_data_.wolf;
+            data[3] = latest_animal_data_.monkey;
+            data[4] = latest_animal_data_.tiger;
+            data[5] = latest_animal_data_.elephant;
+        }
+
+        // 发送数据
+        comm_protocol_.send(CMD_ANIMAL_DATA, data, 6);
+
+        ROS_INFO("Sent animal data to ground station: Grid=%d, Animals=[%d,%d,%d,%d,%d]",
+                data[0], data[1], data[2], data[3], data[4], data[5]);
+    }
+
+    /**
+     * @brief 检查并开始扫描
+     */
+    void checkAndStartScanning() {
+        std::lock_guard<std::mutex> lock(animal_data_mutex_);
+
+        // 计算动物总数
+        uint8_t total_animals = latest_animal_data_.peacock +
+                               latest_animal_data_.wolf +
+                               latest_animal_data_.monkey +
+                               latest_animal_data_.tiger +
+                               latest_animal_data_.elephant;
+
+        if (total_animals > 0) {
+            ROS_INFO("Detected %d animals, starting grid scanning", total_animals);
+
+            // 生成扫描向量
+            generateScanVectors(total_animals);
+
+            // 记录扫描起始位置
+            {
+                std::lock_guard<std::mutex> lock_pose(pose_mutex_);
+                scan_start_position_ = current_pose_.pose.position;
+            }
+
+            // 切换到扫描状态
+            flight_state_ = FlightState::SCANNING_GRID;
+            current_vector_index_ = 0;
+
+            // 发布第一个扫描目标
+            publishNextScanTarget();
+        } else {
+            ROS_INFO("No animals detected, continuing trajectory");
+            flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
+        }
+    }
+
+    /**
+     * @brief 生成扫描向量
+     */
+    void generateScanVectors(uint8_t count) {
+        scan_vectors_.clear();
+
+        // 根据动物坐标生成扫描向量
+        std::lock_guard<std::mutex> lock(animal_data_mutex_);
+
+        for (const auto& coord : latest_animal_data_.coordinates) {
+            geometry_msgs::Point vec;
+            // 归一化向量方向
+            double length = sqrt(coord.x * coord.x + coord.y * coord.y);
+            if (length > 0) {
+                vec.x = coord.x / length;
+                vec.y = coord.y / length;
+                vec.z = 0;  // 保持高度不变
+                scan_vectors_.push_back(vec);
+            }
+        }
+
+        // 如果坐标数量不足，使用默认的扫描模式
+        if (scan_vectors_.size() < count) {
+            double angle_step = 2 * M_PI / count;
+            for (size_t i = scan_vectors_.size(); i < count; ++i) {
+                geometry_msgs::Point vec;
+                vec.x = cos(i * angle_step);
+                vec.y = sin(i * angle_step);
+                vec.z = 0;
+                scan_vectors_.push_back(vec);
+            }
+        }
+
+        ROS_INFO("Generated %zu scan vectors", scan_vectors_.size());
+    }
+
+    /**
+     * @brief 发布下一个扫描目标
+     */
+    void publishNextScanTarget() {
+        if (current_vector_index_ >= scan_vectors_.size()) {
+            ROS_INFO("Scan complete, returning to trajectory");
+            flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
+            return;
+        }
+
+        // 计算目标位置
+        geometry_msgs::PoseStamped target;
+        target.header.frame_id = "map";
+        target.header.stamp = ros::Time::now();
+
+        // 从当前位置向扫描方向移动
+        double scan_distance = 0.3;  // 向外扫描30cm
+        current_scan_target_.x = scan_start_position_.x + scan_vectors_[current_vector_index_].x * scan_distance;
+        current_scan_target_.y = scan_start_position_.y + scan_vectors_[current_vector_index_].y * scan_distance;
+        current_scan_target_.z = scan_start_position_.z;  // 保持高度
+
+        target.pose.position = current_scan_target_;
+        target.pose.orientation.w = 1.0;
+
+        cmd_pub_.publish(target);
+        ROS_INFO("Published scan target %zu: (%.2f, %.2f, %.2f)",
+                current_vector_index_ + 1,
+                current_scan_target_.x,
+                current_scan_target_.y,
+                current_scan_target_.z);
+    }
+
+    /**
      * @brief 位置回调函数
      */
     void poseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
@@ -231,9 +430,88 @@ private:
             current_pose_ = *msg;
         }
 
-        // 检查是否到达当前航点
-        if (is_flying_ && trajectory_received_) {
-            checkWaypointReached();
+        // 检查当前网格
+        checkCurrentGrid();
+
+        // 根据飞行状态进行相应处理
+        switch (flight_state_.load()) {
+            case FlightState::FOLLOWING_TRAJECTORY:
+                if (is_flying_ && trajectory_received_) {
+                    checkWaypointReached();
+                }
+                break;
+
+            case FlightState::SCANNING_GRID:
+                checkScanTargetReached();
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    /**
+     * @brief 检查当前网格
+     */
+    void checkCurrentGrid() {
+        geometry_msgs::Point current_position;
+        {
+            std::lock_guard<std::mutex> lock(pose_mutex_);
+            current_position = current_pose_.pose.position;
+        }
+
+        uint8_t grid_number = trajectory_mapper_.positionToGridNumber(current_position);
+
+        if (grid_number != current_grid_number_ && grid_number != 0) {
+            current_grid_number_ = grid_number;
+
+            std::lock_guard<std::mutex> lock(visited_grids_mutex_);
+            bool is_new_grid = visited_grids_.find(grid_number) == visited_grids_.end();
+
+            // 发送检测信号
+            std_msgs::Bool detect_msg;
+            detect_msg.data = is_new_grid;
+            start_detect_pub_.publish(detect_msg);
+
+            if (is_new_grid) {
+                visited_grids_.insert(grid_number);
+                ROS_INFO("Entered new grid %d, sending start_detect=true", grid_number);
+            } else {
+                ROS_INFO("Re-entered grid %d, sending start_detect=false", grid_number);
+            }
+        }
+    }
+
+    /**
+     * @brief 检查是否到达扫描目标
+     */
+    void checkScanTargetReached() {
+        std::lock_guard<std::mutex> lock(pose_mutex_);
+
+        // 计算与目标的距离
+        double dx = current_pose_.pose.position.x - current_scan_target_.x;
+        double dy = current_pose_.pose.position.y - current_scan_target_.y;
+        double distance = sqrt(dx*dx + dy*dy);
+
+        // 检查是否接近网格边界
+        bool near_boundary = trajectory_mapper_.isNearGridBoundary(
+            current_pose_.pose.position, GRID_BOUNDARY_THRESHOLD);
+
+        if (distance < 0.05 || near_boundary) {
+            if (near_boundary) {
+                ROS_INFO("Approaching grid boundary, moving to next scan vector");
+            } else {
+                ROS_INFO("Reached scan target %zu", current_vector_index_ + 1);
+            }
+
+            current_vector_index_++;
+
+            if (current_vector_index_ < scan_vectors_.size()) {
+                publishNextScanTarget();
+            } else {
+                ROS_INFO("All scan vectors completed, returning to trajectory");
+                flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
+            }
         }
     }
 
@@ -271,6 +549,7 @@ private:
                 // 结束飞行任务
                 is_flying_ = false;
                 trajectory_received_ = false;
+                flight_state_ = FlightState::IDLE;
                 ROS_INFO("Flight mission completed, landing initiated");
                 return;
             }
@@ -287,6 +566,7 @@ private:
             } else {
                 ROS_INFO("All waypoints completed");
                 is_flying_ = false;
+                flight_state_ = FlightState::IDLE;
             }
         }
     }
@@ -309,6 +589,13 @@ private:
                 comm_protocol_.parseByte(buffer[i]);
             }
         }
+    }
+
+    /**
+     * @brief 控制定时器回调
+     */
+    void controlTimerCallback(const ros::TimerEvent& event) {
+        // 可以在这里添加额外的控制逻辑
     }
 };
 
