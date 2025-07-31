@@ -2,8 +2,8 @@
   ******************************************************************************
   * @file    ground_station_node.cpp
   * @brief   地面站通信ROS节点
-  * @version V2.0.0
-  * @date    2025-07-31
+  * @version V2.1.0
+  * @date    2025-08-01
   ******************************************************************************
   */
 
@@ -52,7 +52,8 @@ private:
         IDLE,                    // 空闲
         FOLLOWING_TRAJECTORY,    // 按照预定航线飞行
         SCANNING_GRID,          // 在网格内扫描动物
-        MOVING_TO_NEXT_VECTOR   // 移动到下一个扫描向量
+        MOVING_TO_NEXT_VECTOR,  // 移动到下一个扫描向量
+        PREPARING_LANDING       // 准备降落（停止发布目标位置）
     };
 
     std::atomic<FlightState> flight_state_;
@@ -61,6 +62,15 @@ private:
     std::atomic<bool> trajectory_received_;
     geometry_msgs::PoseStamped current_pose_;
     std::mutex pose_mutex_;
+
+    // 当前目标位置（用于连续发布）
+    geometry_msgs::PoseStamped current_target_;
+    std::mutex target_mutex_;
+    std::atomic<bool> has_target_;
+
+    // 降落相关
+    ros::Time landing_start_time_;
+    std::atomic<bool> is_landing_;
 
     // 动物检测相关
     ground_station_comm::AnimalData latest_animal_data_;
@@ -93,6 +103,8 @@ public:
         current_waypoint_index_(0),
         is_flying_(false),
         trajectory_received_(false),
+        has_target_(false),
+        is_landing_(false),
         animal_data_received_(false),
         current_vector_index_(0),
         current_grid_number_(0) {
@@ -117,7 +129,7 @@ public:
         takeoff_land_pub_ = nh_.advertise<std_msgs::Bool>("/px4ctrl/takeoff_land", 10);
         start_detect_pub_ = nh_.advertise<std_msgs::Bool>("/start_detect", 10);
 
-        // 定时器
+        // 定时器 - 控制定时器用于连续发布目标位置
         serial_timer_ = nh_.createTimer(ros::Duration(0.01),
                                        &GroundStationNode::serialTimerCallback, this);
         control_timer_ = nh_.createTimer(ros::Duration(0.1),
@@ -209,9 +221,9 @@ private:
             trajectory_received_ = true;
         }
 
-        // 如果已经在飞行，发布第一个航点
+        // 如果已经在飞行，设置第一个航点为目标
         if (is_flying_ && !waypoints_.empty()) {
-            publishNextWaypoint();
+            setCurrentTarget();
         }
     }
 
@@ -234,32 +246,77 @@ private:
         is_flying_ = true;
         flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
 
-        // 如果已有轨迹，发布第一个航点
+        // 如果已有轨迹，设置第一个航点为目标
         if (trajectory_received_ && !waypoints_.empty()) {
             ros::Duration(2.0).sleep(); // 等待起飞稳定
-            publishNextWaypoint();
+            setCurrentTarget();
         }
     }
 
     /**
-     * @brief 发布下一个航点
+     * @brief 设置当前目标航点
      */
-    void publishNextWaypoint() {
+    void setCurrentTarget() {
         std::lock_guard<std::mutex> lock(waypoints_mutex_);
 
         size_t index = current_waypoint_index_.load();
         if (index >= waypoints_.size()) {
-            ROS_WARN("No more waypoints to publish");
+            ROS_WARN("No more waypoints to set as target");
+            has_target_ = false;
             return;
         }
 
-        // 发布航点
-        cmd_pub_.publish(waypoints_[index]);
-        ROS_INFO("Published waypoint %zu/%zu: (%.2f, %.2f, %.2f)",
+        // 设置当前目标
+        {
+            std::lock_guard<std::mutex> target_lock(target_mutex_);
+            current_target_ = waypoints_[index];
+        }
+        has_target_ = true;
+
+        ROS_INFO("Set waypoint %zu/%zu as current target: (%.2f, %.2f, %.2f)",
                 index + 1, waypoints_.size(),
                 waypoints_[index].pose.position.x,
                 waypoints_[index].pose.position.y,
                 waypoints_[index].pose.position.z);
+    }
+
+    /**
+     * @brief 设置扫描目标
+     */
+    void setScanTarget() {
+        if (current_vector_index_ >= scan_vectors_.size()) {
+            ROS_INFO("Scan complete, returning to trajectory");
+            flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
+            has_target_ = false;
+            return;
+        }
+
+        // 计算目标位置
+        geometry_msgs::PoseStamped target;
+        target.header.frame_id = "map";
+        target.header.stamp = ros::Time::now();
+
+        // 从当前位置向扫描方向移动
+        double scan_distance = 0.3;  // 向外扫描30cm
+        current_scan_target_.x = scan_start_position_.x + scan_vectors_[current_vector_index_].x * scan_distance;
+        current_scan_target_.y = scan_start_position_.y + scan_vectors_[current_vector_index_].y * scan_distance;
+        current_scan_target_.z = scan_start_position_.z;  // 保持高度
+
+        target.pose.position = current_scan_target_;
+        target.pose.orientation.w = 1.0;
+
+        // 设置为当前目标
+        {
+            std::lock_guard<std::mutex> target_lock(target_mutex_);
+            current_target_ = target;
+        }
+        has_target_ = true;
+
+        ROS_INFO("Set scan target %zu as current target: (%.2f, %.2f, %.2f)",
+                current_vector_index_ + 1,
+                current_scan_target_.x,
+                current_scan_target_.y,
+                current_scan_target_.z);
     }
 
     /**
@@ -345,8 +402,8 @@ private:
             flight_state_ = FlightState::SCANNING_GRID;
             current_vector_index_ = 0;
 
-            // 发布第一个扫描目标
-            publishNextScanTarget();
+            // 设置第一个扫描目标
+            setScanTarget();
         } else {
             ROS_INFO("No animals detected, continuing trajectory");
             flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
@@ -390,38 +447,6 @@ private:
     }
 
     /**
-     * @brief 发布下一个扫描目标
-     */
-    void publishNextScanTarget() {
-        if (current_vector_index_ >= scan_vectors_.size()) {
-            ROS_INFO("Scan complete, returning to trajectory");
-            flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
-            return;
-        }
-
-        // 计算目标位置
-        geometry_msgs::PoseStamped target;
-        target.header.frame_id = "map";
-        target.header.stamp = ros::Time::now();
-
-        // 从当前位置向扫描方向移动
-        double scan_distance = 0.3;  // 向外扫描30cm
-        current_scan_target_.x = scan_start_position_.x + scan_vectors_[current_vector_index_].x * scan_distance;
-        current_scan_target_.y = scan_start_position_.y + scan_vectors_[current_vector_index_].y * scan_distance;
-        current_scan_target_.z = scan_start_position_.z;  // 保持高度
-
-        target.pose.position = current_scan_target_;
-        target.pose.orientation.w = 1.0;
-
-        cmd_pub_.publish(target);
-        ROS_INFO("Published scan target %zu: (%.2f, %.2f, %.2f)",
-                current_vector_index_ + 1,
-                current_scan_target_.x,
-                current_scan_target_.y,
-                current_scan_target_.z);
-    }
-
-    /**
      * @brief 位置回调函数
      */
     void poseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
@@ -443,6 +468,10 @@ private:
 
             case FlightState::SCANNING_GRID:
                 checkScanTargetReached();
+                break;
+
+            case FlightState::PREPARING_LANDING:
+                // 在准备降落状态下不进行位置检查
                 break;
 
             default:
@@ -507,10 +536,11 @@ private:
             current_vector_index_++;
 
             if (current_vector_index_ < scan_vectors_.size()) {
-                publishNextScanTarget();
+                setScanTarget();
             } else {
                 ROS_INFO("All scan vectors completed, returning to trajectory");
                 flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
+                has_target_ = false;
             }
         }
     }
@@ -539,34 +569,32 @@ private:
 
             // 检查是否到达倒数第二个点
             if (index == waypoints_.size() - 2) {
-                ROS_INFO("Reached second to last waypoint, sending land command and stopping");
+                ROS_INFO("Reached second to last waypoint, preparing for landing");
 
-                // 发送降落命令
-                std_msgs::Bool land_msg;
-                land_msg.data = false;
-                takeoff_land_pub_.publish(land_msg);
+                // 切换到准备降落状态，停止发布目标位置
+                flight_state_ = FlightState::PREPARING_LANDING;
+                has_target_ = false;
+                is_landing_ = true;
+                landing_start_time_ = ros::Time::now();
 
-                // 结束飞行任务
-                is_flying_ = false;
-                trajectory_received_ = false;
-                flight_state_ = FlightState::IDLE;
-                ROS_INFO("Flight mission completed, landing initiated");
+                ROS_INFO("Stopped publishing target positions, will send land command in 1 second");
                 return;
             }
 
             // 移动到下一个航点
             current_waypoint_index_++;
 
-            // 发布下一个航点
+            // 设置下一个航点为目标
             if (current_waypoint_index_ < waypoints_.size()) {
-                // 解锁后发布，避免死锁
+                // 解锁后设置目标，避免死锁
                 lock_wp.~lock_guard();
                 lock_pose.~lock_guard();
-                publishNextWaypoint();
+                setCurrentTarget();
             } else {
                 ROS_INFO("All waypoints completed");
                 is_flying_ = false;
                 flight_state_ = FlightState::IDLE;
+                has_target_ = false;
             }
         }
     }
@@ -592,10 +620,58 @@ private:
     }
 
     /**
-     * @brief 控制定时器回调
+     * @brief 控制定时器回调 - 连续发布当前目标位置
      */
     void controlTimerCallback(const ros::TimerEvent& event) {
-        // 可以在这里添加额外的控制逻辑
+        // 处理降落逻辑
+        if (is_landing_) {
+            ros::Duration elapsed = ros::Time::now() - landing_start_time_;
+
+            // 等待1秒后发送降落命令
+            if (elapsed.toSec() >= 1.0) {
+                ROS_INFO("Sending land command");
+
+                // 发送降落命令
+                std_msgs::Bool land_msg;
+                land_msg.data = false;
+                takeoff_land_pub_.publish(land_msg);
+
+                // 结束飞行任务
+                is_flying_ = false;
+                trajectory_received_ = false;
+                flight_state_ = FlightState::IDLE;
+                has_target_ = false;
+                is_landing_ = false;
+
+                ROS_INFO("Flight mission completed, landing initiated");
+                return;
+            } else {
+                // 在等待期间不发布任何目标位置
+                ROS_INFO("Waiting %.1f more seconds before landing...", 1.0 - elapsed.toSec());
+                return;
+            }
+        }
+
+        // 如果有目标且正在飞行，连续发布目标位置
+        if (has_target_ && is_flying_ && flight_state_ != FlightState::PREPARING_LANDING) {
+            std::lock_guard<std::mutex> lock(target_mutex_);
+
+            // 更新时间戳
+            current_target_.header.stamp = ros::Time::now();
+
+            // 发布目标位置
+            cmd_pub_.publish(current_target_);
+
+            // 调试信息（降低输出频率）
+            static int counter = 0;
+            if (++counter >= 10) {  // 每1秒输出一次
+                ROS_DEBUG("Publishing target: (%.2f, %.2f, %.2f)",
+                         current_target_.pose.position.x,
+                         current_target_.pose.position.y,
+                         current_target_.pose.position.z);
+                counter = 0;
+            }
+        }
     }
 };
 
