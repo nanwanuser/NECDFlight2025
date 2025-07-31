@@ -311,7 +311,7 @@ public:
     YOLO11ROSNode() : it_(nh_), camera_opened_(false), should_publish_data_(false) {
         // 获取参数
         nh_.param<std::string>("model_path", model_path_, 
-            "/home/orangepi/YOLO11_RK3588_object_detect-main/model/fix_gaoqing.rknn");
+            "/home/orangepi/NECDFlight2025/src/yolo11_ros/model/fix_gaoqing.rknn");
         nh_.param<int>("camera_index", camera_index_, 0);
         
         // 初始化发布器和订阅器

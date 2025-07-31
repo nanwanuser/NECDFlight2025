@@ -25,7 +25,7 @@
 #include <vector>
 //#define LABEL_NALE_TXT_PATH "./model/coco_80_labels_list.txt"
 //#define LABEL_NALE_TXT_PATH "/home/firefly/yolo11/model/4classgarbage.txt"
-#define LABEL_NALE_TXT_PATH "/home/orangepi/YOLO11_RK3588_object_detect-main/model/4classgarbage.txt"
+#define LABEL_NALE_TXT_PATH "/home/orangepi/NECDFlight2025/src/yolo11_ros/model/4classgarbage.txt"
 using namespace std;
 
 static char *labels[OBJ_CLASS_NUM];
