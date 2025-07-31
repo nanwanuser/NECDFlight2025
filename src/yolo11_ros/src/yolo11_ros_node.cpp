@@ -56,7 +56,7 @@ private:
     // 将像素坐标转换为单位向量
     geometry_msgs::Point pixelToUnitVector(double pixel_x, double pixel_y) {
         double x = pixel_x - IMAGE_WIDTH / 2.0;
-        double y = pixel_y - IMAGE_HEIGHT / 2.0;
+        double y = IMAGE_HEIGHT / 2.0-pixel_y;
         
         double magnitude = std::sqrt(x*x + y*y);
         geometry_msgs::Point unit_vector;
