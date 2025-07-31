@@ -1,0 +1,11 @@
+# Ground Station Communication Configuration
+
+# Serial port settings
+serial_device: "/dev/ttyUSB0"
+serial_baudrate: 115200
+
+# Position control settings
+position_threshold: 0.3  # meters
+
+# Debug settings
+debug_mode: false

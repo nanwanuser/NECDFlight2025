@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Ground Station Communication Node -->
+    <node pkg="ground_station_comm" type="ground_station_node" name="ground_station_node" output="screen">
+        <!-- 串口配置 -->
+        <param name="serial_device" value="/dev/ttyUSB0" />
+        <param name="serial_baudrate" value="115200" />
+
+        <!-- 位置到达阈值（米） -->
+        <param name="position_threshold" value="0.3" />
+
+        <!-- 可选：从配置文件加载参数 -->
+        <!-- <rosparam file="$(find ground_station_comm)/config/serial_config.yaml" command="load" /> -->
+    </node>
+</launch>
