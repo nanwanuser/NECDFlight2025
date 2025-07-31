@@ -40,9 +40,9 @@ private:
     bool camera_opened_;
     bool should_publish_data_;  // 新增：是否应该发布数据的标志
     
-    // 图像尺寸 - 摄像头实际支持的分辨率
+    // 图像尺寸
     const double IMAGE_WIDTH = 640.0;
-    const double IMAGE_HEIGHT = 480.0;  // 🔥 改回480，匹配摄像头支持的分辨率
+    const double IMAGE_HEIGHT = 480.0;
     
     // 类别映射 - 根据你的5种动物调整
     std::map<int, std::string> class_to_animal_ = {
@@ -174,10 +174,6 @@ private:
             return;
         }
         
-        // 🔥 获取实际帧的尺寸
-        int actual_width = frame.cols;
-        int actual_height = frame.rows;
-        
         // 转换为image_buffer_t格式
         image_buffer_t src_image;
         memset(&src_image, 0, sizeof(image_buffer_t));
@@ -192,9 +188,6 @@ private:
         ret = inference_yolo11_model(&rknn_app_ctx_, &src_image, &od_results);
         
         if (ret == 0) {
-            // 🔥 调整检测框坐标到实际图像尺寸
-            adjustDetectionBoxes(&od_results, actual_width, actual_height);
-            
             // 在图像上绘制检测结果
             drawObjectsOnMat(frame, &od_results);
             
@@ -224,35 +217,6 @@ private:
         
         // 释放内存
         free(src_image.virt_addr);
-    }
-    
-    // 🔥 新增：调整检测框坐标
-    void adjustDetectionBoxes(object_detect_result_list* od_results, int actual_width, int actual_height) {
-        // 如果实际尺寸与设定尺寸不同，需要缩放坐标
-        float scale_x = (float)actual_width / IMAGE_WIDTH;
-        float scale_y = (float)actual_height / IMAGE_HEIGHT;
-        
-        for (int i = 0; i < od_results->count; i++) {
-            object_detect_result* det_result = &(od_results->results[i]);
-            
-            // 缩放检测框坐标
-            det_result->box.left = (int)(det_result->box.left * scale_x);
-            det_result->box.top = (int)(det_result->box.top * scale_y);
-            det_result->box.right = (int)(det_result->box.right * scale_x);
-            det_result->box.bottom = (int)(det_result->box.bottom * scale_y);
-            
-            // 确保坐标在图像范围内
-            det_result->box.left = std::max(0, std::min(det_result->box.left, actual_width - 1));
-            det_result->box.top = std::max(0, std::min(det_result->box.top, actual_height - 1));
-            det_result->box.right = std::max(0, std::min(det_result->box.right, actual_width - 1));
-            det_result->box.bottom = std::max(0, std::min(det_result->box.bottom, actual_height - 1));
-        }
-        
-        // 调试输出
-        if (od_results->count > 0) {
-            ROS_DEBUG("Frame size: %dx%d, Scale: %.2fx%.2f", 
-                     actual_width, actual_height, scale_x, scale_y);
-        }
     }
     
     // 执行检测并发布结果（保留原函数但简化）
@@ -384,20 +348,8 @@ public:
         cap_.set(cv::CAP_PROP_FRAME_WIDTH, IMAGE_WIDTH);
         cap_.set(cv::CAP_PROP_FRAME_HEIGHT, IMAGE_HEIGHT);
         
-        // 🔥 获取实际设置的分辨率
-        double actual_width = cap_.get(cv::CAP_PROP_FRAME_WIDTH);
-        double actual_height = cap_.get(cv::CAP_PROP_FRAME_HEIGHT);
-        
         camera_opened_ = true;
-        ROS_INFO("Camera opened successfully");
-        ROS_INFO("Requested resolution: %.0fx%.0f", IMAGE_WIDTH, IMAGE_HEIGHT);
-        ROS_INFO("Actual resolution: %.0fx%.0f", actual_width, actual_height);
-        
-        if (actual_width != IMAGE_WIDTH || actual_height != IMAGE_HEIGHT) {
-            ROS_WARN("Camera resolution mismatch! This may cause detection box offset.");
-            ROS_WARN("Consider updating IMAGE_WIDTH and IMAGE_HEIGHT constants.");
-        }
-        
+        ROS_INFO("Camera opened successfully with resolution %.0fx%.0f", IMAGE_WIDTH, IMAGE_HEIGHT);
         return 0;
     }
     
