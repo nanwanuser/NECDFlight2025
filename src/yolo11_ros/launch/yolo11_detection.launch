@@ -1,0 +1,6 @@
+<launch>
+    <node name="yolo11_node" pkg="yolo11_ros" type="yolo11_ros_node" output="screen">
+        <param name="model_path" value="/home/orangepi/YOLO11_RK3588_object_detect-main/model/fix_gaoqing.rknn"/>
+        <param name="camera_index" value="0"/>
+    </node>
+</launch>
