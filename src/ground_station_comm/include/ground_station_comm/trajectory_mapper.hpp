@@ -2,8 +2,8 @@
 ******************************************************************************
   * @file    trajectory_mapper.hpp
   * @brief   轨迹映射器 - 将网格标号映射到ROS坐标系
-  * @version V1.0.0
-  * @date    2025-07-31
+  * @version V1.1.0
+  * @date    2025-08-01
   ******************************************************************************
   */
 
@@ -24,7 +24,7 @@ namespace GroundStation {
     class TrajectoryMapper {
     private:
         static constexpr double GRID_SIZE = 0.5;  // 网格大小（米）
-        static constexpr double HEIGHT = 1.2;     // 固定高度（米）
+        static constexpr double HEIGHT = 1.0;     // 固定高度（米） - 修改为1.0米
         static constexpr int GRID_WIDTH = 9;      // 网格宽度
         static constexpr int GRID_HEIGHT = 7;     // 网格高度
 
@@ -86,6 +86,11 @@ namespace GroundStation {
          * @brief 获取网格大小
          */
         static double getGridSize() { return GRID_SIZE; }
+
+        /**
+         * @brief 获取固定高度
+         */
+        static double getHeight() { return HEIGHT; }
     };
 
 } // namespace GroundStation

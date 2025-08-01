@@ -2,8 +2,8 @@
   ******************************************************************************
   * @file    trajectory_mapper.cpp
   * @brief   轨迹映射器实现
-  * @version V1.0.0
-  * @date    2025-07-31
+  * @version V1.1.0
+  * @date    2025-08-01
   ******************************************************************************
   */
 
@@ -26,7 +26,7 @@ namespace GroundStation {
  * 第1行: 1  2  3  4  5  6  7  8  9   (x=0.0)
  *       y=0                        y=4
  *
- * 标号1在原点(0,0,1.2)，标号2在(0,0.5,1.2)，标号9在(0,4,1.2)，标号55在(3,0,1.2)
+ * 标号1在原点(0,0,1.0)，标号2在(0,0.5,1.0)，标号9在(0,4,1.0)，标号55在(3,0,1.0)
  */
 bool TrajectoryMapper::gridNumberToPose(uint8_t grid_number, geometry_msgs::PoseStamped& pose) {
     // 检查标号有效性
@@ -47,7 +47,7 @@ bool TrajectoryMapper::gridNumberToPose(uint8_t grid_number, geometry_msgs::Pose
     // y方向：col=0对应y=0，col=8对应y=4.0，间隔0.5米
     double x = row * GRID_SIZE;
     double y = col * GRID_SIZE;
-    double z = HEIGHT;
+    double z = HEIGHT;  // 固定高度1.0米
 
     // 设置位姿
     pose.header.frame_id = "map";
@@ -84,7 +84,7 @@ std::vector<geometry_msgs::PoseStamped> TrajectoryMapper::parseTrajectory(const 
         }
     }
 
-    ROS_INFO("Parsed trajectory with %zu waypoints", waypoints_.size());
+    ROS_INFO("Parsed trajectory with %zu waypoints (height=%.1fm)", waypoints_.size(), HEIGHT);
 
     return waypoints_;
 }
@@ -129,7 +129,7 @@ geometry_msgs::Point TrajectoryMapper::getGridCenter(uint8_t grid_number) {
     // 网格中心位置
     center.x = row * GRID_SIZE + GRID_SIZE / 2.0;
     center.y = col * GRID_SIZE + GRID_SIZE / 2.0;
-    center.z = HEIGHT;
+    center.z = HEIGHT;  // 固定高度1.0米
 
     return center;
 }

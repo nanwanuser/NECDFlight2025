@@ -9,3 +9,8 @@ position_threshold: 0.3  # meters
 
 # Debug settings
 debug_mode: false
+
+# Note:
+# - Flight height is fixed at 1.0 meters
+# - Position commands are published to /mavros/setpoint_position/local
+# - 45-degree diagonal landing to origin when reaching second-to-last waypoint

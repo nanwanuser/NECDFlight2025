@@ -9,6 +9,13 @@
         <!-- 位置到达阈值（米） -->
         <param name="position_threshold" value="0.3" />
 
+        <!--
+        说明：
+        1. 位置命令发布到 /mavros/setpoint_position/local
+        2. 所有飞行高度固定为 1.0 米
+        3. 到达倒数第二个航点时，自动执行45度角斜飞降落至原点
+        -->
+
         <!-- 可选：从配置文件加载参数 -->
         <!-- <rosparam file="$(find ground_station_comm)/config/serial_config.yaml" command="load" /> -->
     </node>
