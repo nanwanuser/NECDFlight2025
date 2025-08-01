@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    ground_station_node.cpp
   * @brief   地面站通信ROS节点
-  * @version V2.3.0
+  * @version V2.3.1
   * @date    2025-08-01
   ******************************************************************************
   */
@@ -317,8 +317,9 @@ private:
         }
 
         // 发送一些setpoints在切换到OFFBOARD模式之前
+        // 修复：减少初始setpoints数量，从20减少到10，减少起飞延迟
         ROS_INFO("Sending initial setpoints before OFFBOARD mode");
-        for (int i = 0; ros::ok() && i < 20; i++) {
+        for (int i = 0; ros::ok() && i < 10; i++) {  // 从20改为10
             geometry_msgs::PoseStamped pose;
             pose.header.stamp = ros::Time::now();
             pose.header.frame_id = "map";
@@ -396,7 +397,12 @@ private:
         if (current_vector_index_ >= scan_vectors_.size()) {
             ROS_INFO("Scan complete, returning to trajectory");
             flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
-            has_target_ = false;
+            // 修复：扫描完成后，需要重新设置轨迹目标
+            if (trajectory_received_ && !waypoints_.empty()) {
+                setCurrentTarget();
+            } else {
+                has_target_ = false;
+            }
             return;
         }
 
@@ -421,8 +427,8 @@ private:
         }
         has_target_ = true;
 
-        ROS_INFO("Set scan target %zu as current target: (%.2f, %.2f, %.2f)",
-                current_vector_index_ + 1,
+        ROS_INFO("Set scan target %zu/%zu as current target: (%.2f, %.2f, %.2f)",
+                current_vector_index_ + 1, scan_vectors_.size(),
                 current_scan_target_.x,
                 current_scan_target_.y,
                 FIXED_HEIGHT);
@@ -545,20 +551,30 @@ private:
 
             // 设置第一个扫描目标
             setScanTarget();
+
+            // 修复：确保is_flying_状态正确
+            ROS_INFO("Scanning mode activated, is_flying_=%s, has_target_=%s",
+                     is_flying_.load() ? "true" : "false",
+                     has_target_.load() ? "true" : "false");
         } else {
             ROS_INFO("No animals detected, continuing trajectory");
+            // 修复：确保继续轨迹飞行时有正确的目标
             flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
+            if (!has_target_ && trajectory_received_ && !waypoints_.empty()) {
+                setCurrentTarget();
+            }
         }
     }
 
     /**
      * @brief 生成扫描向量
+     * @note 调用此函数前必须已经持有 animal_data_mutex_ 锁
      */
     void generateScanVectors(uint8_t count) {
         scan_vectors_.clear();
 
         // 根据动物坐标生成扫描向量
-        std::lock_guard<std::mutex> lock(animal_data_mutex_);
+        // 注意：不需要再次获取锁，因为调用者已经持有了锁
 
         for (const auto& coord : latest_animal_data_.coordinates) {
             geometry_msgs::Point vec;
@@ -705,11 +721,20 @@ private:
             current_vector_index_++;
 
             if (current_vector_index_ < scan_vectors_.size()) {
+                // 释放锁后设置下一个扫描目标
+                lock.~lock_guard();
                 setScanTarget();
             } else {
                 ROS_INFO("All scan vectors completed, returning to trajectory");
                 flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
-                has_target_ = false;
+
+                // 释放锁后恢复轨迹目标
+                lock.~lock_guard();
+                if (trajectory_received_ && !waypoints_.empty()) {
+                    setCurrentTarget();
+                } else {
+                    has_target_ = false;
+                }
             }
         }
     }
