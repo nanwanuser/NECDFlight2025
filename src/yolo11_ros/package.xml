@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>yolo11_ros</name>
+  <version>0.0.0</version>
+  <description>YOLO11 RKNN NPU detection ROS node</description>
+  
+  <maintainer email="your@email.com">your_name</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  
+  <!-- 消息生成相关依赖 -->
+  <build_depend>message_generation</build_depend>
+  <exec_depend>message_runtime</exec_depend>
+  
+  <!-- ROS核心依赖 -->
+  <depend>roscpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>image_transport</depend>
+  
+  <!-- OpenCV依赖 -->
+  <build_depend>libopencv-dev</build_depend>
+  <exec_depend>libopencv-dev</exec_depend>
+  
+  <!-- 系统依赖 -->
+  <build_depend>librknn-dev</build_depend>
+  <exec_depend>librknn-dev</exec_depend>
+  
+  <export>
+  </export>
+</package>
