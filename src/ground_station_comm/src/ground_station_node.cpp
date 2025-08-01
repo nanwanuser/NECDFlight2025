@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    ground_station_node.cpp
   * @brief   地面站通信ROS节点
-  * @version V2.3.2
+  * @version V2.4.0
   * @date    2025-08-01
   ******************************************************************************
   */
@@ -63,7 +63,9 @@ private:
         ARMING,                  // 解锁中
         TAKING_OFF,              // 起飞中
         FOLLOWING_TRAJECTORY,    // 按照预定航线飞行
+        MOVING_TO_GRID_CENTER,   // 移动到网格中心
         SCANNING_GRID,          // 在网格内扫描动物
+        SCAN_HOVERING,          // 扫描间的短暂悬停
         MOVING_TO_NEXT_VECTOR,  // 移动到下一个扫描向量
         LANDING                 // 斜飞降落
     };
@@ -96,8 +98,11 @@ private:
     std::atomic<bool> animal_data_received_;
     std::vector<geometry_msgs::Point> scan_vectors_;  // 扫描向量
     size_t current_vector_index_;
-    geometry_msgs::Point scan_start_position_;        // 扫描起始位置
+    geometry_msgs::Point scan_start_position_;        // 扫描起始位置（网格中心）
     geometry_msgs::Point current_scan_target_;        // 当前扫描目标位置
+    geometry_msgs::Point grid_center_;                // 当前网格中心
+    ros::Time hover_start_time_;                      // 悬停开始时间
+    static constexpr double HOVER_DURATION = 0.5;     // 悬停持续时间（秒）
 
     // 已访问网格跟踪
     std::set<uint8_t> visited_grids_;
@@ -107,9 +112,9 @@ private:
     // 位置到达阈值
     double position_threshold_;
     static constexpr double GRID_BOUNDARY_THRESHOLD = 0.1;  // 10cm
-    static constexpr double FIXED_HEIGHT = 1.0;             // 固定飞行高度1.0米
+    static constexpr double FIXED_HEIGHT = 0.9;             // 固定飞行高度0.9米
     static constexpr double LANDING_HEIGHT = 0.1;           // 降落目标高度0.1米
-    static constexpr double TAKEOFF_HEIGHT = 1.0;           // 起飞高度1.0米
+    static constexpr double TAKEOFF_HEIGHT = 0.9;           // 起飞高度0.9米
 
     // 命令定义
     static constexpr uint8_t CMD_TRAJECTORY = 0x01;
@@ -248,7 +253,7 @@ private:
         // 解析轨迹
         auto new_waypoints = trajectory_mapper_.parseTrajectory(data, len);
 
-        // 确保所有航点高度为1.0米
+        // 确保所有航点高度为0.9米
         for (auto& waypoint : new_waypoints) {
             waypoint.pose.position.z = FIXED_HEIGHT;
         }
@@ -318,9 +323,8 @@ private:
         }
 
         // 发送一些setpoints在切换到OFFBOARD模式之前
-        // 修复：减少初始setpoints数量，从20减少到10，减少起飞延迟
         ROS_INFO("Sending initial setpoints before OFFBOARD mode");
-        for (int i = 0; ros::ok() && i < 10; i++) {  // 从20改为10
+        for (int i = 0; ros::ok() && i < 10; i++) {
             geometry_msgs::PoseStamped pose;
             pose.header.stamp = ros::Time::now();
             pose.header.frame_id = "map";
@@ -379,7 +383,7 @@ private:
         {
             std::lock_guard<std::mutex> target_lock(target_mutex_);
             current_target_ = waypoints_[index];
-            // 确保高度为1.0米
+            // 确保高度为0.9米
             current_target_.pose.position.z = FIXED_HEIGHT;
         }
         has_target_ = true;
@@ -392,13 +396,45 @@ private:
     }
 
     /**
+     * @brief 设置网格中心目标
+     */
+    void setGridCenterTarget() {
+        // 获取当前网格中心
+        geometry_msgs::Point current_position;
+        {
+            std::lock_guard<std::mutex> lock(pose_mutex_);
+            current_position = current_pose_.pose.position;
+        }
+
+        uint8_t grid_number = trajectory_mapper_.positionToGridNumber(current_position);
+        grid_center_ = trajectory_mapper_.getGridCenter(grid_number);
+
+        // 设置网格中心为目标
+        geometry_msgs::PoseStamped target;
+        target.header.frame_id = "map";
+        target.header.stamp = ros::Time::now();
+        target.pose.position = grid_center_;
+        target.pose.position.z = FIXED_HEIGHT;  // 保持固定高度
+        target.pose.orientation.w = 1.0;
+
+        {
+            std::lock_guard<std::mutex> target_lock(target_mutex_);
+            current_target_ = target;
+        }
+        has_target_ = true;
+
+        ROS_INFO("Moving to grid center: (%.2f, %.2f, %.2f)",
+                grid_center_.x, grid_center_.y, FIXED_HEIGHT);
+    }
+
+    /**
      * @brief 设置扫描目标
      */
     void setScanTarget() {
         if (current_vector_index_ >= scan_vectors_.size()) {
             ROS_INFO("Scan complete, returning to trajectory");
             flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
-            // 修复：扫描完成后，需要重新设置轨迹目标
+            // 扫描完成后，需要重新设置轨迹目标
             if (trajectory_received_ && !waypoints_.empty()) {
                 setCurrentTarget();
             } else {
@@ -412,10 +448,10 @@ private:
         target.header.frame_id = "map";
         target.header.stamp = ros::Time::now();
 
-        // 从当前位置向扫描方向移动
-        double scan_distance = 0.3;  // 向外扫描30cm
-        current_scan_target_.x = scan_start_position_.x + scan_vectors_[current_vector_index_].x * scan_distance;
-        current_scan_target_.y = scan_start_position_.y + scan_vectors_[current_vector_index_].y * scan_distance;
+        // 从网格中心向扫描方向移动
+        double scan_distance = 0.2;  // 向外扫描20cm（减小扫描距离）
+        current_scan_target_.x = grid_center_.x + scan_vectors_[current_vector_index_].x * scan_distance;
+        current_scan_target_.y = grid_center_.y + scan_vectors_[current_vector_index_].y * scan_distance;
         current_scan_target_.z = FIXED_HEIGHT;  // 保持固定高度
 
         target.pose.position = current_scan_target_;
@@ -553,28 +589,20 @@ private:
             // 生成扫描向量
             generateScanVectors(total_animals);
 
-            // 记录扫描起始位置
-            {
-                std::lock_guard<std::mutex> lock_pose(pose_mutex_);
-                scan_start_position_ = current_pose_.pose.position;
-            }
-
-            // 切换到扫描状态
-            flight_state_ = FlightState::SCANNING_GRID;
+            // 切换到移动到网格中心状态
+            flight_state_ = FlightState::MOVING_TO_GRID_CENTER;
             current_vector_index_ = 0;
 
-            // 设置第一个扫描目标
-            setScanTarget();
+            // 设置网格中心为目标
+            lock.~lock_guard();  // 释放锁以避免死锁
+            setGridCenterTarget();
 
-            // 修复：确保is_flying_状态正确
-            ROS_INFO("Scanning mode activated, is_flying_=%s, has_target_=%s",
-                     is_flying_.load() ? "true" : "false",
-                     has_target_.load() ? "true" : "false");
         } else {
             ROS_INFO("No animals detected, continuing trajectory");
-            // 修复：确保继续轨迹飞行时有正确的目标
+            // 确保继续轨迹飞行时有正确的目标
             flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
             if (!has_target_ && trajectory_received_ && !waypoints_.empty()) {
+                lock.~lock_guard();  // 释放锁以避免死锁
                 setCurrentTarget();
             }
         }
@@ -588,8 +616,6 @@ private:
         scan_vectors_.clear();
 
         // 根据动物坐标生成扫描向量
-        // 注意：不需要再次获取锁，因为调用者已经持有了锁
-
         for (const auto& coord : latest_animal_data_.coordinates) {
             geometry_msgs::Point vec;
             // 归一化向量方向
@@ -643,8 +669,16 @@ private:
                 }
                 break;
 
+            case FlightState::MOVING_TO_GRID_CENTER:
+                checkGridCenterReached();
+                break;
+
             case FlightState::SCANNING_GRID:
                 checkScanTargetReached();
+                break;
+
+            case FlightState::SCAN_HOVERING:
+                checkHoverComplete();
                 break;
 
             case FlightState::LANDING:
@@ -675,6 +709,30 @@ private:
                 lock.~lock_guard();
                 setCurrentTarget();
             }
+        }
+    }
+
+    /**
+     * @brief 检查是否到达网格中心
+     */
+    void checkGridCenterReached() {
+        std::lock_guard<std::mutex> lock(pose_mutex_);
+
+        // 计算与网格中心的距离
+        double dx = current_pose_.pose.position.x - grid_center_.x;
+        double dy = current_pose_.pose.position.y - grid_center_.y;
+        double distance = sqrt(dx*dx + dy*dy);
+
+        if (distance < 0.1) {  // 10cm内认为到达
+            ROS_INFO("Reached grid center, starting scan");
+
+            // 切换到扫描状态
+            flight_state_ = FlightState::SCANNING_GRID;
+            scan_start_position_ = grid_center_;  // 扫描起始位置设为网格中心
+
+            // 设置第一个扫描目标
+            lock.~lock_guard();
+            setScanTarget();
         }
     }
 
@@ -721,29 +779,35 @@ private:
         double dy = current_pose_.pose.position.y - current_scan_target_.y;
         double distance = sqrt(dx*dx + dy*dy);
 
-        // 检查是否接近网格边界
-        bool near_boundary = trajectory_mapper_.isNearGridBoundary(
-            current_pose_.pose.position, GRID_BOUNDARY_THRESHOLD);
+        if (distance < 0.05) {  // 5cm内认为到达
+            ROS_INFO("Reached scan target %zu, starting hover", current_vector_index_ + 1);
 
-        if (distance < 0.05 || near_boundary) {
-            if (near_boundary) {
-                ROS_INFO("Approaching grid boundary, moving to next scan vector");
-            } else {
-                ROS_INFO("Reached scan target %zu", current_vector_index_ + 1);
-            }
+            // 切换到悬停状态
+            flight_state_ = FlightState::SCAN_HOVERING;
+            hover_start_time_ = ros::Time::now();
+        }
+    }
+
+    /**
+     * @brief 检查悬停是否完成
+     */
+    void checkHoverComplete() {
+        double hover_duration = (ros::Time::now() - hover_start_time_).toSec();
+
+        if (hover_duration >= HOVER_DURATION) {
+            ROS_INFO("Hover complete for vector %zu", current_vector_index_ + 1);
 
             current_vector_index_++;
 
             if (current_vector_index_ < scan_vectors_.size()) {
-                // 释放锁后设置下一个扫描目标
-                lock.~lock_guard();
+                // 继续扫描下一个向量
+                flight_state_ = FlightState::SCANNING_GRID;
                 setScanTarget();
             } else {
+                // 所有扫描完成，返回航线
                 ROS_INFO("All scan vectors completed, returning to trajectory");
                 flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
 
-                // 释放锁后恢复轨迹目标
-                lock.~lock_guard();
                 if (trajectory_received_ && !waypoints_.empty()) {
                     setCurrentTarget();
                 } else {
@@ -918,8 +982,14 @@ private:
                     case FlightState::FOLLOWING_TRAJECTORY:
                         state_str = "FOLLOWING_TRAJECTORY";
                         break;
+                    case FlightState::MOVING_TO_GRID_CENTER:
+                        state_str = "MOVING_TO_GRID_CENTER";
+                        break;
                     case FlightState::SCANNING_GRID:
                         state_str = "SCANNING_GRID";
+                        break;
+                    case FlightState::SCAN_HOVERING:
+                        state_str = "SCAN_HOVERING";
                         break;
                     case FlightState::LANDING:
                         state_str = "LANDING";
