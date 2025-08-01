@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    ground_station_node.cpp
   * @brief   地面站通信ROS节点
-  * @version V2.3.1
+  * @version V2.3.2
   * @date    2025-08-01
   ******************************************************************************
   */
@@ -113,9 +113,10 @@ private:
 
     // 命令定义
     static constexpr uint8_t CMD_TRAJECTORY = 0x01;
-    static constexpr uint8_t CMD_TAKEOFF = 0x02;
+    static constexpr uint8_t CMD_TAKEOFF = 0x02;      // 复用作为降落通知命令
     static constexpr uint8_t CMD_ANIMAL_DATA = 0x03;  // 新增：动物数据命令
     static constexpr uint8_t TAKEOFF_DATA = 0x11;
+    static constexpr uint8_t LANDING_DATA = 0xFF;     // 新增：降落数据
 
 public:
     GroundStationNode() :
@@ -459,6 +460,19 @@ private:
     }
 
     /**
+     * @brief 发送降落通知到地面站
+     */
+    void sendLandingNotification() {
+        uint8_t landing_data = LANDING_DATA;  // 0xFF
+
+        // 使用CMD_TAKEOFF(0x02)作为命令字，发送0xFF数据
+        comm_protocol_.send(CMD_TAKEOFF, &landing_data, 1);
+
+        ROS_INFO("Sent landing notification to ground station: CMD=0x%02X, Data=0x%02X",
+                CMD_TAKEOFF, landing_data);
+    }
+
+    /**
      * @brief MAVROS状态回调
      */
     void mavrosStateCallback(const mavros_msgs::State::ConstPtr& msg) {
@@ -771,6 +785,9 @@ private:
                 flight_state_ = FlightState::LANDING;
                 is_landing_ = true;
                 landing_start_time_ = ros::Time::now();
+
+                // 发送降落通知到地面站
+                sendLandingNotification();
 
                 // 设置降落目标
                 lock_wp.~lock_guard();
