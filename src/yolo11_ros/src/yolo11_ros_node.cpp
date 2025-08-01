@@ -201,6 +201,11 @@ private:
         for (int i = 0; i < od_results->count; i++) {
             object_detect_result* det_result = &(od_results->results[i]);
             
+            // 🔥 新增：置信度低于0.6的不显示
+            if (det_result->prop < 0.6) {
+                continue;
+            }
+            
             // 绘制矩形框
             cv::rectangle(mat, 
                          cv::Point(det_result->box.left, det_result->box.top),
@@ -233,6 +238,11 @@ private:
         for (int i = 0; i < od_results->count; i++) {
             object_detect_result* det_result = &(od_results->results[i]);
             
+            // 🔥 新增：置信度低于0.6的不计入有效数据
+            if (det_result->prop < 0.6) {
+                continue;
+            }
+            
             // 计算中心点坐标
             double center_x = (det_result->box.left + det_result->box.right) / 2.0;
             double center_y = (det_result->box.top + det_result->box.bottom) / 2.0;
@@ -258,6 +268,11 @@ private:
             ROS_DEBUG("Animal detected: cls_id=%d, name=%s, count: E=%d H=%d K=%d L=%d LL=%d", 
                      cls_id, class_name.c_str(), elephant, monkey, peacock, tiger, wolf);
         }
+    }
+    
+    // 🔥 新增：检查是否有有效检测数据
+    bool hasValidDetections(int peacock, int wolf, int monkey, int tiger, int elephant) {
+        return (peacock + wolf + monkey + tiger + elephant) > 0;
     }
     
     // 连续检测并显示
@@ -299,20 +314,26 @@ private:
             // 在图像上绘制检测结果
             drawObjectsOnMat(frame, &od_results);
             
-            // 如果收到发布标志，则发布数据并获取坐标
+            // 如果收到发布标志，则检查是否有有效数据再决定是否发布
             if (should_publish_data_) {
-                // 统计动物数量并发布
+                // 统计动物数量
                 int peacock, wolf, monkey, tiger, elephant;
                 countAnimals(&od_results, peacock, wolf, monkey, tiger, elephant, coords);
                 
-                publishAnimalData(peacock, wolf, monkey, tiger, elephant, coords);
-                publishImage(frame);
+                // 🔥 只有存在有效检测数据时才发布话题
+                if (hasValidDetections(peacock, wolf, monkey, tiger, elephant)) {
+                    publishAnimalData(peacock, wolf, monkey, tiger, elephant, coords);
+                    publishImage(frame);
+                    ROS_INFO("Valid detection data published");
+                } else {
+                    ROS_INFO("No valid detections (all below 0.6 confidence), skipping publish");
+                }
                 
-                // 发布完成信号
+                // 无论是否有有效数据，都发布完成信号
                 std_msgs::Bool false_msg;
                 false_msg.data = false;
                 start_detect_pub_.publish(false_msg);
-                ROS_INFO("Detection data published, sent false to /start_detect");
+                ROS_INFO("Detection completed, sent false to /start_detect");
                 
                 should_publish_data_ = false;  // 重置标志
             } else {
@@ -423,11 +444,11 @@ public:
     YOLO11ROSNode() : it_(nh_), camera_opened_(false), should_publish_data_(false) {
         // 获取参数
         nh_.param<std::string>("model_path", model_path_, 
-            "/home/orangepi/NECDFlight2025/src/yolo11_ros/model/fix_gaoqing.rknn");
+            "/home/orangepi/NECDFlight2025/src/yolo11_ros/model/fix_paper.rknn");
         nh_.param<int>("camera_index", camera_index_, 0);
         
         // 初始化发布器和订阅器
-        animal_pub_ = nh_.advertise<yolo11_ros::AnimalData>("/animal_detection", 10);
+        animal_pub_ = nh_.advertise<yolo11_ros::AnimalData>("/animal", 10);
         start_detect_pub_ = nh_.advertise<std_msgs::Bool>("/start_detect", 10);
         start_detect_sub_ = nh_.subscribe("/start_detect", 10, 
             &YOLO11ROSNode::startDetectCallback, this);
@@ -452,7 +473,8 @@ public:
         ROS_INFO("Camera index: %d", camera_index_);
         ROS_INFO("Animal classes: 0=d_elephant, 1=h_monkey, 2=k_kongque, 3=l_tiger, 4=ll_wolf");
         ROS_INFO("Subscribed to /start_detect topic");
-        ROS_INFO("Publishing to /animal_detection and /yolo11/detection_image");
+        ROS_INFO("Publishing to /animal and /yolo11/detection_image");
+        ROS_INFO("🔥 Confidence threshold: 0.6 (detections below 0.6 will be filtered out)");
     }
     
     ~YOLO11ROSNode() {
