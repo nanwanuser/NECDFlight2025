@@ -9,6 +9,9 @@
         <!-- 位置到达阈值（米） -->
         <param name="position_threshold" value="0.3" />
 
+        <!-- 飞行速度（米/秒） -->
+        <param name="flight_speed" value="0.5" />
+
         <!-- 可选：从配置文件加载参数 -->
         <!-- <rosparam file="$(find ground_station_comm)/config/serial_config.yaml" command="load" /> -->
     </node>

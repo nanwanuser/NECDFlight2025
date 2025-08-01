@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    ground_station_node.cpp
   * @brief   地面站通信ROS节点
-  * @version V2.1.0
+  * @version V2.2.0
   * @date    2025-08-01
   ******************************************************************************
   */
@@ -64,9 +64,14 @@ private:
     std::mutex pose_mutex_;
 
     // 当前目标位置（用于连续发布）
-    geometry_msgs::PoseStamped current_target_;
+    geometry_msgs::PoseStamped current_target_;      // 当前插值目标
+    geometry_msgs::PoseStamped final_target_;        // 最终目标航点
     std::mutex target_mutex_;
     std::atomic<bool> has_target_;
+
+    // 速度控制
+    double flight_speed_;                            // 飞行速度 (m/s)
+    static constexpr double CONTROL_PERIOD = 0.1;    // 控制周期 (s)
 
     // 降落相关
     ros::Time landing_start_time_;
@@ -113,6 +118,7 @@ public:
         pnh_.param<std::string>("serial_device", serial_device_, "/dev/ttyUSB0");
         pnh_.param<int>("serial_baudrate", serial_baudrate_, 115200);
         pnh_.param<double>("position_threshold", position_threshold_, 0.3);
+        pnh_.param<double>("flight_speed", flight_speed_, 0.5);
 
         // 初始化串口
         initSerial();
@@ -132,10 +138,10 @@ public:
         // 定时器 - 控制定时器用于连续发布目标位置
         serial_timer_ = nh_.createTimer(ros::Duration(0.01),
                                        &GroundStationNode::serialTimerCallback, this);
-        control_timer_ = nh_.createTimer(ros::Duration(0.1),
+        control_timer_ = nh_.createTimer(ros::Duration(CONTROL_PERIOD),
                                         &GroundStationNode::controlTimerCallback, this);
 
-        ROS_INFO("Ground Station Node initialized");
+        ROS_INFO("Ground Station Node initialized with flight speed: %.2f m/s", flight_speed_);
     }
 
 private:
@@ -266,14 +272,17 @@ private:
             return;
         }
 
-        // 设置当前目标
+        // 设置最终目标
         {
             std::lock_guard<std::mutex> target_lock(target_mutex_);
-            current_target_ = waypoints_[index];
+            final_target_ = waypoints_[index];
+            // 初始化当前目标为当前位置（将在控制循环中更新）
+            std::lock_guard<std::mutex> pose_lock(pose_mutex_);
+            current_target_ = current_pose_;
         }
         has_target_ = true;
 
-        ROS_INFO("Set waypoint %zu/%zu as current target: (%.2f, %.2f, %.2f)",
+        ROS_INFO("Set waypoint %zu/%zu as final target: (%.2f, %.2f, %.2f)",
                 index + 1, waypoints_.size(),
                 waypoints_[index].pose.position.x,
                 waypoints_[index].pose.position.y,
@@ -305,18 +314,56 @@ private:
         target.pose.position = current_scan_target_;
         target.pose.orientation.w = 1.0;
 
-        // 设置为当前目标
+        // 设置为最终目标
         {
             std::lock_guard<std::mutex> target_lock(target_mutex_);
-            current_target_ = target;
+            final_target_ = target;
+            // 当前目标会在控制循环中更新
         }
         has_target_ = true;
 
-        ROS_INFO("Set scan target %zu as current target: (%.2f, %.2f, %.2f)",
+        ROS_INFO("Set scan target %zu as final target: (%.2f, %.2f, %.2f)",
                 current_vector_index_ + 1,
                 current_scan_target_.x,
                 current_scan_target_.y,
                 current_scan_target_.z);
+    }
+
+    /**
+     * @brief 更新插值目标位置
+     */
+    void updateInterpolatedTarget() {
+        std::lock_guard<std::mutex> target_lock(target_mutex_);
+        std::lock_guard<std::mutex> pose_lock(pose_mutex_);
+
+        // 计算从当前位置到最终目标的向量
+        double dx = final_target_.pose.position.x - current_pose_.pose.position.x;
+        double dy = final_target_.pose.position.y - current_pose_.pose.position.y;
+        double dz = final_target_.pose.position.z - current_pose_.pose.position.z;
+
+        // 计算距离
+        double distance = sqrt(dx*dx + dy*dy + dz*dz);
+
+        // 如果已经很接近目标，直接设置为最终目标
+        if (distance < position_threshold_) {
+            current_target_ = final_target_;
+            return;
+        }
+
+        // 计算这个控制周期内应该移动的距离
+        double step_distance = flight_speed_ * CONTROL_PERIOD;
+
+        // 如果步进距离大于剩余距离，直接到达目标
+        if (step_distance >= distance) {
+            current_target_ = final_target_;
+        } else {
+            // 计算插值位置
+            double ratio = step_distance / distance;
+            current_target_.pose.position.x = current_pose_.pose.position.x + dx * ratio;
+            current_target_.pose.position.y = current_pose_.pose.position.y + dy * ratio;
+            current_target_.pose.position.z = current_pose_.pose.position.z + dz * ratio;
+            current_target_.pose.orientation = final_target_.pose.orientation;
+        }
     }
 
     /**
@@ -515,18 +562,20 @@ private:
      * @brief 检查是否到达扫描目标
      */
     void checkScanTargetReached() {
+        // 使用最终目标来检查是否到达
         std::lock_guard<std::mutex> lock(pose_mutex_);
+        std::lock_guard<std::mutex> target_lock(target_mutex_);
 
-        // 计算与目标的距离
-        double dx = current_pose_.pose.position.x - current_scan_target_.x;
-        double dy = current_pose_.pose.position.y - current_scan_target_.y;
+        // 计算与最终目标的距离
+        double dx = current_pose_.pose.position.x - final_target_.pose.position.x;
+        double dy = current_pose_.pose.position.y - final_target_.pose.position.y;
         double distance = sqrt(dx*dx + dy*dy);
 
         // 检查是否接近网格边界
         bool near_boundary = trajectory_mapper_.isNearGridBoundary(
             current_pose_.pose.position, GRID_BOUNDARY_THRESHOLD);
 
-        if (distance < 0.05 || near_boundary) {
+        if (distance < position_threshold_ || near_boundary) {
             if (near_boundary) {
                 ROS_INFO("Approaching grid boundary, moving to next scan vector");
             } else {
@@ -536,6 +585,9 @@ private:
             current_vector_index_++;
 
             if (current_vector_index_ < scan_vectors_.size()) {
+                // 解锁后设置目标，避免死锁
+                target_lock.~lock_guard();
+                lock.~lock_guard();
                 setScanTarget();
             } else {
                 ROS_INFO("All scan vectors completed, returning to trajectory");
@@ -647,28 +699,34 @@ private:
                 return;
             } else {
                 // 在等待期间不发布任何目标位置
-                ROS_INFO("Waiting %.1f more seconds before landing...", 1.0 - elapsed.toSec());
+                ROS_DEBUG("Waiting %.1f more seconds before landing...", 1.0 - elapsed.toSec());
                 return;
             }
         }
 
-        // 如果有目标且正在飞行，连续发布目标位置
+        // 如果有目标且正在飞行，更新插值目标并发布
         if (has_target_ && is_flying_ && flight_state_ != FlightState::PREPARING_LANDING) {
-            std::lock_guard<std::mutex> lock(target_mutex_);
+            // 更新插值目标
+            updateInterpolatedTarget();
 
-            // 更新时间戳
-            current_target_.header.stamp = ros::Time::now();
-
-            // 发布目标位置
-            cmd_pub_.publish(current_target_);
+            // 发布当前插值目标
+            {
+                std::lock_guard<std::mutex> lock(target_mutex_);
+                current_target_.header.stamp = ros::Time::now();
+                cmd_pub_.publish(current_target_);
+            }
 
             // 调试信息（降低输出频率）
             static int counter = 0;
             if (++counter >= 10) {  // 每1秒输出一次
-                ROS_DEBUG("Publishing target: (%.2f, %.2f, %.2f)",
+                std::lock_guard<std::mutex> lock(target_mutex_);
+                ROS_DEBUG("Publishing interpolated target: (%.2f, %.2f, %.2f) -> Final: (%.2f, %.2f, %.2f)",
                          current_target_.pose.position.x,
                          current_target_.pose.position.y,
-                         current_target_.pose.position.z);
+                         current_target_.pose.position.z,
+                         final_target_.pose.position.x,
+                         final_target_.pose.position.y,
+                         final_target_.pose.position.z);
                 counter = 0;
             }
         }

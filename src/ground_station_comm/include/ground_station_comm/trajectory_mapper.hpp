@@ -24,7 +24,7 @@ namespace GroundStation {
     class TrajectoryMapper {
     private:
         static constexpr double GRID_SIZE = 0.5;  // 网格大小（米）
-        static constexpr double HEIGHT = 1.2;     // 固定高度（米）
+        static constexpr double HEIGHT = 0.9;     // 固定高度（米）
         static constexpr int GRID_WIDTH = 9;      // 网格宽度
         static constexpr int GRID_HEIGHT = 7;     // 网格高度
 
