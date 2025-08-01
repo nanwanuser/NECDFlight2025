@@ -56,7 +56,7 @@ private:
     // 将像素坐标转换为单位向量
     geometry_msgs::Point pixelToUnitVector(double pixel_x, double pixel_y) {
         double x = pixel_x - IMAGE_WIDTH / 2.0;
-        double y = IMAGE_HEIGHT / 2.0-pixel_y;
+        double y = IMAGE_HEIGHT / 2.0 - pixel_y;
         
         double magnitude = std::sqrt(x*x + y*y);
         geometry_msgs::Point unit_vector;
@@ -70,6 +70,105 @@ private:
             unit_vector.z = 0.0;
         }
         return unit_vector;
+    }
+    
+    // 🔥 新增：在图像上绘制坐标系标注
+    void drawCoordinateSystem(cv::Mat& mat, bool refresh_flag = false) {
+        // 计算图像中心点
+        int center_x = static_cast<int>(IMAGE_WIDTH / 2.0);
+        int center_y = static_cast<int>(IMAGE_HEIGHT / 2.0);
+        
+        // 设置坐标轴长度
+        int axis_length = 80;
+        
+        // 颜色定义
+        cv::Scalar center_color = cv::Scalar(0, 0, 255);     // 红色中心点
+        cv::Scalar x_axis_color = cv::Scalar(0, 255, 0);     // 绿色X轴
+        cv::Scalar y_axis_color = cv::Scalar(255, 0, 0);     // 蓝色Y轴
+        cv::Scalar text_color = cv::Scalar(255, 255, 255);   // 白色文字
+        cv::Scalar bg_color = cv::Scalar(0, 0, 0);           // 黑色背景
+        
+        // 如果刷新标志为true，绘制更突出的坐标系
+        if (refresh_flag) {
+            center_color = cv::Scalar(0, 255, 255);  // 黄色中心点
+            axis_length = 100;  // 更长的坐标轴
+        }
+        
+        // 绘制中心点
+        cv::circle(mat, cv::Point(center_x, center_y), 5, center_color, -1);
+        
+        // 绘制X轴 (水平向右为正)
+        cv::arrowedLine(mat, 
+                       cv::Point(center_x, center_y), 
+                       cv::Point(center_x + axis_length, center_y),
+                       x_axis_color, 2, 8, 0, 0.3);
+        
+        // 绘制Y轴 (垂直向上为正)
+        cv::arrowedLine(mat, 
+                       cv::Point(center_x, center_y), 
+                       cv::Point(center_x, center_y - axis_length),
+                       y_axis_color, 2, 8, 0, 0.3);
+        
+        // 绘制坐标轴标签
+        cv::putText(mat, "+X", cv::Point(center_x + axis_length + 5, center_y + 5),
+                   cv::FONT_HERSHEY_SIMPLEX, 0.5, x_axis_color, 1);
+        cv::putText(mat, "+Y", cv::Point(center_x + 5, center_y - axis_length - 5),
+                   cv::FONT_HERSHEY_SIMPLEX, 0.5, y_axis_color, 1);
+        
+        // 绘制象限标识
+        cv::putText(mat, "(-1,+1)", cv::Point(center_x - 60, center_y - 40),
+                   cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
+        cv::putText(mat, "(+1,+1)", cv::Point(center_x + 20, center_y - 40),
+                   cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
+        cv::putText(mat, "(-1,-1)", cv::Point(center_x - 60, center_y + 50),
+                   cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
+        cv::putText(mat, "(+1,-1)", cv::Point(center_x + 20, center_y + 50),
+                   cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
+        
+        // 绘制中心坐标
+        cv::putText(mat, "(0,0)", cv::Point(center_x + 8, center_y - 8),
+                   cv::FONT_HERSHEY_SIMPLEX, 0.5, center_color, 1);
+        
+        // 如果刷新标志为true，添加额外的刷新提示
+        if (refresh_flag) {
+            // 绘制半透明背景
+            cv::Rect text_bg(10, 10, 200, 30);
+            cv::rectangle(mat, text_bg, bg_color, -1);
+            
+            cv::putText(mat, "COORDINATE REFRESHED!", cv::Point(15, 30),
+                       cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 255), 2);
+        }
+    }
+    
+    // 🔥 新增：绘制检测到的动物的单位向量
+    void drawAnimalVectors(cv::Mat& mat, const std::vector<std::pair<double, double>>& coords) {
+        int center_x = static_cast<int>(IMAGE_WIDTH / 2.0);
+        int center_y = static_cast<int>(IMAGE_HEIGHT / 2.0);
+        
+        for (size_t i = 0; i < coords.size(); i++) {
+            double pixel_x = coords[i].first;
+            double pixel_y = coords[i].second;
+            
+            // 计算单位向量
+            geometry_msgs::Point unit_vec = pixelToUnitVector(pixel_x, pixel_y);
+            
+            // 计算在图像上的显示位置 (缩放单位向量用于显示)
+            int vec_end_x = center_x + static_cast<int>(unit_vec.x * 60);
+            int vec_end_y = center_y - static_cast<int>(unit_vec.y * 60);  // 注意Y轴翻转
+            
+            // 绘制从中心到目标的向量
+            cv::arrowedLine(mat,
+                           cv::Point(center_x, center_y),
+                           cv::Point(vec_end_x, vec_end_y),
+                           cv::Scalar(255, 255, 0), 2, 8, 0, 0.4);  // 青色箭头
+            
+            // 在向量末端显示坐标值
+            char coord_text[64];
+            sprintf(coord_text, "(%.2f,%.2f)", unit_vec.x, unit_vec.y);
+            cv::putText(mat, coord_text,
+                       cv::Point(vec_end_x + 5, vec_end_y - 5),
+                       cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 0), 1);
+        }
     }
     
     // 将OpenCV Mat转换为image_buffer_t
@@ -101,6 +200,11 @@ private:
         
         for (int i = 0; i < od_results->count; i++) {
             object_detect_result* det_result = &(od_results->results[i]);
+            
+            // 🔥 新增：置信度低于0.6的不显示
+            if (det_result->prop < 0.6) {
+                continue;
+            }
             
             // 绘制矩形框
             cv::rectangle(mat, 
@@ -134,6 +238,11 @@ private:
         for (int i = 0; i < od_results->count; i++) {
             object_detect_result* det_result = &(od_results->results[i]);
             
+            // 🔥 新增：置信度低于0.6的不计入有效数据
+            if (det_result->prop < 0.6) {
+                continue;
+            }
+            
             // 计算中心点坐标
             double center_x = (det_result->box.left + det_result->box.right) / 2.0;
             double center_y = (det_result->box.top + det_result->box.bottom) / 2.0;
@@ -159,6 +268,11 @@ private:
             ROS_DEBUG("Animal detected: cls_id=%d, name=%s, count: E=%d H=%d K=%d L=%d LL=%d", 
                      cls_id, class_name.c_str(), elephant, monkey, peacock, tiger, wolf);
         }
+    }
+    
+    // 🔥 新增：检查是否有有效检测数据
+    bool hasValidDetections(int peacock, int wolf, int monkey, int tiger, int elephant) {
+        return (peacock + wolf + monkey + tiger + elephant) > 0;
     }
     
     // 连续检测并显示
@@ -191,6 +305,8 @@ private:
         object_detect_result_list od_results;
         ret = inference_yolo11_model(&rknn_app_ctx_, &src_image, &od_results);
         
+        std::vector<std::pair<double, double>> coords;
+        
         if (ret == 0) {
             // 🔥 调整检测框坐标到实际图像尺寸
             adjustDetectionBoxes(&od_results, actual_width, actual_height);
@@ -198,29 +314,46 @@ private:
             // 在图像上绘制检测结果
             drawObjectsOnMat(frame, &od_results);
             
-            // 显示结果窗口
-            cv::imshow("YOLO11 Detection Results", frame);
-            cv::waitKey(1);
-            
-            // 如果收到发布标志，则发布数据
+            // 如果收到发布标志，则检查是否有有效数据再决定是否发布
             if (should_publish_data_) {
-                // 统计动物数量并发布
+                // 统计动物数量
                 int peacock, wolf, monkey, tiger, elephant;
-                std::vector<std::pair<double, double>> coords;
                 countAnimals(&od_results, peacock, wolf, monkey, tiger, elephant, coords);
                 
-                publishAnimalData(peacock, wolf, monkey, tiger, elephant, coords);
-                publishImage(frame);
+                // 🔥 只有存在有效检测数据时才发布话题
+                if (hasValidDetections(peacock, wolf, monkey, tiger, elephant)) {
+                    publishAnimalData(peacock, wolf, monkey, tiger, elephant, coords);
+                    publishImage(frame);
+                    ROS_INFO("Valid detection data published");
+                } else {
+                    ROS_INFO("No valid detections (all below 0.6 confidence), skipping publish");
+                }
                 
-                // 发布完成信号
+                // 无论是否有有效数据，都发布完成信号
                 std_msgs::Bool false_msg;
                 false_msg.data = false;
                 start_detect_pub_.publish(false_msg);
-                ROS_INFO("Detection data published, sent false to /start_detect");
+                ROS_INFO("Detection completed, sent false to /start_detect");
                 
                 should_publish_data_ = false;  // 重置标志
+            } else {
+                // 如果没有发布标志，仍然计算坐标用于显示
+                int peacock, wolf, monkey, tiger, elephant;
+                countAnimals(&od_results, peacock, wolf, monkey, tiger, elephant, coords);
             }
         }
+        
+        // 🔥 始终绘制坐标系，如果刷新标志为true则高亮显示
+        drawCoordinateSystem(frame, should_publish_data_);
+        
+        // 🔥 绘制检测到的动物的单位向量
+        if (!coords.empty()) {
+            drawAnimalVectors(frame, coords);
+        }
+        
+        // 显示结果窗口
+        cv::imshow("YOLO11 Detection Results", frame);
+        cv::waitKey(1);
         
         // 释放内存
         free(src_image.virt_addr);
@@ -311,11 +444,11 @@ public:
     YOLO11ROSNode() : it_(nh_), camera_opened_(false), should_publish_data_(false) {
         // 获取参数
         nh_.param<std::string>("model_path", model_path_, 
-            "/home/orangepi/NECDFlight2025/src/yolo11_ros/model/fix_gaoqing.rknn");
+            "/home/orangepi/NECDFlight2025/src/yolo11_ros/model/point_s_fix_all.rknn");
         nh_.param<int>("camera_index", camera_index_, 0);
         
         // 初始化发布器和订阅器
-        animal_pub_ = nh_.advertise<yolo11_ros::AnimalData>("/animal_detection", 10);
+        animal_pub_ = nh_.advertise<yolo11_ros::AnimalData>("/animal", 10);
         start_detect_pub_ = nh_.advertise<std_msgs::Bool>("/start_detect", 10);
         start_detect_sub_ = nh_.subscribe("/start_detect", 10, 
             &YOLO11ROSNode::startDetectCallback, this);
@@ -340,7 +473,8 @@ public:
         ROS_INFO("Camera index: %d", camera_index_);
         ROS_INFO("Animal classes: 0=d_elephant, 1=h_monkey, 2=k_kongque, 3=l_tiger, 4=ll_wolf");
         ROS_INFO("Subscribed to /start_detect topic");
-        ROS_INFO("Publishing to /animal_detection and /yolo11/detection_image");
+        ROS_INFO("Publishing to /animal and /yolo11/detection_image");
+        ROS_INFO("🔥 Confidence threshold: 0.6 (detections below 0.6 will be filtered out)");
     }
     
     ~YOLO11ROSNode() {

@@ -279,7 +279,7 @@ public:
         nh_.param<int>("camera_index", camera_index_, 0);
         
         // 初始化发布器和订阅器
-        animal_pub_ = nh_.advertise<yolo11_ros::AnimalData>("/animal_detection", 10);
+        animal_pub_ = nh_.advertise<yolo11_ros::AnimalData>("/animal", 10);
         start_detect_pub_ = nh_.advertise<std_msgs::Bool>("/start_detect", 10);
         start_detect_sub_ = nh_.subscribe("/start_detect", 10, 
             &YOLO11ROSNode::startDetectCallback, this);
