@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    ground_station_node.cpp
   * @brief   地面站通信ROS节点
-  * @version V2.5.2
+  * @version V2.5.3
   * @date    2025-08-01
   ******************************************************************************
   */
@@ -109,6 +109,7 @@ private:
     ros::Time waypoint_hover_start_time_;             // 航点悬停开始时间
     bool detect_signal_sent_;                         // 检测信号是否已发送
     bool should_scan_after_hover_;                    // 悬停后是否需要扫描
+    uint8_t current_scanning_grid_;                   // 当前正在扫描的网格编号
 
     // 已访问网格跟踪
     std::set<uint8_t> visited_grids_;
@@ -118,6 +119,10 @@ private:
     // 已检测航点跟踪
     std::set<size_t> detected_waypoints_;
     std::mutex detected_waypoints_mutex_;
+
+    // 已扫描网格跟踪
+    std::set<uint8_t> scanned_grids_;
+    std::mutex scanned_grids_mutex_;
 
     // 位置到达阈值
     double position_threshold_;
@@ -147,7 +152,8 @@ public:
         current_grid_number_(0),
         landing_start_height_(FIXED_HEIGHT),
         detect_signal_sent_(false),
-        should_scan_after_hover_(false) {
+        should_scan_after_hover_(false),
+        current_scanning_grid_(0) {
 
         // 读取参数
         pnh_.param<std::string>("serial_device", serial_device_, "/dev/ttyUSB0");
@@ -281,6 +287,12 @@ private:
         {
             std::lock_guard<std::mutex> lock(detected_waypoints_mutex_);
             detected_waypoints_.clear();
+        }
+
+        // 清空已扫描网格记录
+        {
+            std::lock_guard<std::mutex> lock(scanned_grids_mutex_);
+            scanned_grids_.clear();
         }
 
         // 如果已经在飞行，设置第一个航点为目标
@@ -447,6 +459,7 @@ private:
 
         uint8_t grid_number = trajectory_mapper_.positionToGridNumber(current_position);
         grid_center_ = trajectory_mapper_.getGridCenter(grid_number);
+        current_scanning_grid_ = grid_number;  // 记录当前正在扫描的网格
 
         // 设置网格中心为目标
         geometry_msgs::PoseStamped target;
@@ -462,8 +475,8 @@ private:
         }
         has_target_ = true;
 
-        ROS_INFO("Moving to grid center: (%.2f, %.2f, %.2f)",
-                grid_center_.x, grid_center_.y, FIXED_HEIGHT);
+        ROS_INFO("Moving to grid center of grid %d: (%.2f, %.2f, %.2f)",
+                grid_number, grid_center_.x, grid_center_.y, FIXED_HEIGHT);
     }
 
     /**
@@ -471,10 +484,16 @@ private:
      */
     void setScanTarget() {
         if (current_vector_index_ >= scan_vectors_.size()) {
-            ROS_INFO("Scan complete, moving to next waypoint");
-            flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
+            ROS_INFO("Scan complete for grid %d, marking as scanned", current_scanning_grid_);
 
-            // 扫描完成后，移动到下一个航点
+            // 标记当前网格为已扫描
+            {
+                std::lock_guard<std::mutex> lock(scanned_grids_mutex_);
+                scanned_grids_.insert(current_scanning_grid_);
+            }
+
+            // 移动到下一个航点
+            flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
             moveToNextWaypoint();
             return;
         }
@@ -615,17 +634,36 @@ private:
                                latest_animal_data_.tiger +
                                latest_animal_data_.elephant;
 
-        if (total_animals > 0) {
-            ROS_INFO("Detected %d animals, will start grid scanning after hover", total_animals);
+        // 获取当前网格编号
+        geometry_msgs::Point current_position;
+        {
+            std::lock_guard<std::mutex> lock_pose(pose_mutex_);
+            current_position = current_pose_.pose.position;
+        }
+        uint8_t grid_number = trajectory_mapper_.positionToGridNumber(current_position);
+
+        // 检查当前网格是否已经扫描过
+        bool already_scanned = false;
+        {
+            std::lock_guard<std::mutex> lock_scan(scanned_grids_mutex_);
+            already_scanned = (scanned_grids_.find(grid_number) != scanned_grids_.end());
+        }
+
+        if (already_scanned) {
+            ROS_INFO("Grid %d already scanned, skipping scan even though %d animals detected",
+                    grid_number, total_animals);
+            should_scan_after_hover_ = false;
+        } else if (total_animals > 0) {
+            ROS_INFO("Detected %d animals in grid %d, will start grid scanning after hover",
+                    total_animals, grid_number);
 
             // 生成扫描向量
             generateScanVectors(total_animals);
 
             // 标记悬停后需要扫描
             should_scan_after_hover_ = true;
-
         } else {
-            ROS_INFO("No animals detected");
+            ROS_INFO("No animals detected in grid %d", grid_number);
             should_scan_after_hover_ = false;
         }
     }
@@ -797,11 +835,17 @@ private:
                 flight_state_ = FlightState::SCANNING_GRID;
                 setScanTarget();
             } else {
-                // 所有扫描完成，返回航线
-                ROS_INFO("All scan vectors completed, moving to next waypoint");
-                flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
+                // 所有扫描完成
+                ROS_INFO("All scan vectors completed for grid %d", current_scanning_grid_);
+
+                // 标记当前网格为已扫描
+                {
+                    std::lock_guard<std::mutex> lock(scanned_grids_mutex_);
+                    scanned_grids_.insert(current_scanning_grid_);
+                }
 
                 // 移动到下一个航点
+                flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
                 moveToNextWaypoint();
             }
         }
@@ -960,8 +1004,8 @@ private:
                 should_scan_after_hover_ = false;
                 animal_data_received_ = false;
             } else {
-                // 没有检测到动物，继续下一个航点
-                ROS_INFO("No animal detection or no animals found, moving to next waypoint");
+                // 没有检测到动物或网格已扫描，继续下一个航点
+                ROS_INFO("No animal detection, no animals found, or grid already scanned - moving to next waypoint");
                 moveToNextWaypoint();
             }
         }
@@ -1087,11 +1131,19 @@ private:
                         state_str = "IDLE";
                 }
 
-                ROS_INFO("State: %s, Publishing target: (%.2f, %.2f, %.2f)",
+                // 获取已扫描网格数量
+                size_t scanned_count = 0;
+                {
+                    std::lock_guard<std::mutex> lock(scanned_grids_mutex_);
+                    scanned_count = scanned_grids_.size();
+                }
+
+                ROS_INFO("State: %s, Publishing target: (%.2f, %.2f, %.2f), Scanned grids: %zu",
                          state_str,
                          current_target_.pose.position.x,
                          current_target_.pose.position.y,
-                         current_target_.pose.position.z);
+                         current_target_.pose.position.z,
+                         scanned_count);
                 counter = 0;
             }
         }
