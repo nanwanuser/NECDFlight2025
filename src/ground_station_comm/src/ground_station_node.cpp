@@ -102,7 +102,7 @@ private:
     geometry_msgs::Point current_scan_target_;        // 当前扫描目标位置
     geometry_msgs::Point grid_center_;                // 当前网格中心
     ros::Time hover_start_time_;                      // 悬停开始时间
-    static constexpr double HOVER_DURATION = 0.5;     // 悬停持续时间（秒）
+    static constexpr double HOVER_DURATION = 1.2;     // 悬停持续时间（秒）
 
     // 已访问网格跟踪
     std::set<uint8_t> visited_grids_;
