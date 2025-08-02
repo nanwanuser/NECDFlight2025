@@ -38,13 +38,13 @@ private:
     cv::VideoCapture cap_;
     int camera_index_;
     bool camera_opened_;
-    bool should_publish_data_;  // 新增：是否应该发布数据的标志
+    bool should_publish_data_;  // 是否应该发布数据的标志
     
-    // 图像尺寸 - 摄像头实际支持的分辨率
+    // 图像尺寸 - 模型和摄像头都是640x480，无需转换
     const double IMAGE_WIDTH = 640.0;
-    const double IMAGE_HEIGHT = 480.0;  // 🔥 改回480，匹配摄像头支持的分辨率
+    const double IMAGE_HEIGHT = 480.0;
     
-    // 类别映射 - 根据你的5种动物调整
+    // 类别映射
     std::map<int, std::string> class_to_animal_ = {
         {0, "d_elephant"},   // 类别0对应大象
         {1, "h_monkey"},     // 类别1对应猴子
@@ -53,10 +53,15 @@ private:
         {4, "ll_wolf"}       // 类别4对应狼
     };
 
-    // 将像素坐标转换为单位向量
+    // 将像素坐标转换为单位向量 - 上为X正方向，左为Y正方向
     geometry_msgs::Point pixelToUnitVector(double pixel_x, double pixel_y) {
-        double x = pixel_x - IMAGE_WIDTH / 2.0;
-        double y = IMAGE_HEIGHT / 2.0 - pixel_y;
+        // 原始坐标系计算（右为X正，上为Y正）
+        double original_x = pixel_x - IMAGE_WIDTH / 2.0;
+        double original_y = IMAGE_HEIGHT / 2.0 - pixel_y;
+        
+        // 坐标系旋转90度：上为X正方向，左为Y正方向
+        double x = original_y;   // 原来的Y（上为正）变成新的X（上为正）
+        double y = -original_x;  // 原来的X（右为正）的负值变成新的Y（左为正）
         
         double magnitude = std::sqrt(x*x + y*y);
         geometry_msgs::Point unit_vector;
@@ -72,7 +77,7 @@ private:
         return unit_vector;
     }
     
-    // 🔥 新增：在图像上绘制坐标系标注
+    // 在图像上绘制坐标系标注
     void drawCoordinateSystem(cv::Mat& mat, bool refresh_flag = false) {
         // 计算图像中心点
         int center_x = static_cast<int>(IMAGE_WIDTH / 2.0);
@@ -97,32 +102,32 @@ private:
         // 绘制中心点
         cv::circle(mat, cv::Point(center_x, center_y), 5, center_color, -1);
         
-        // 绘制X轴 (水平向右为正)
-        cv::arrowedLine(mat, 
-                       cv::Point(center_x, center_y), 
-                       cv::Point(center_x + axis_length, center_y),
-                       x_axis_color, 2, 8, 0, 0.3);
-        
-        // 绘制Y轴 (垂直向上为正)
+        // 绘制X轴 (垂直向上为正)
         cv::arrowedLine(mat, 
                        cv::Point(center_x, center_y), 
                        cv::Point(center_x, center_y - axis_length),
+                       x_axis_color, 2, 8, 0, 0.3);
+        
+        // 绘制Y轴 (水平向左为正)
+        cv::arrowedLine(mat, 
+                       cv::Point(center_x, center_y), 
+                       cv::Point(center_x - axis_length, center_y),
                        y_axis_color, 2, 8, 0, 0.3);
         
         // 绘制坐标轴标签
-        cv::putText(mat, "+X", cv::Point(center_x + axis_length + 5, center_y + 5),
+        cv::putText(mat, "+X", cv::Point(center_x + 5, center_y - axis_length - 5),
                    cv::FONT_HERSHEY_SIMPLEX, 0.5, x_axis_color, 1);
-        cv::putText(mat, "+Y", cv::Point(center_x + 5, center_y - axis_length - 5),
+        cv::putText(mat, "+Y", cv::Point(center_x - axis_length - 25, center_y + 5),
                    cv::FONT_HERSHEY_SIMPLEX, 0.5, y_axis_color, 1);
         
         // 绘制象限标识
-        cv::putText(mat, "(-1,+1)", cv::Point(center_x - 60, center_y - 40),
+        cv::putText(mat, "(+1,+1)", cv::Point(center_x - 60, center_y - 40),
                    cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
-        cv::putText(mat, "(+1,+1)", cv::Point(center_x + 20, center_y - 40),
+        cv::putText(mat, "(+1,-1)", cv::Point(center_x + 20, center_y - 40),
                    cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
-        cv::putText(mat, "(-1,-1)", cv::Point(center_x - 60, center_y + 50),
+        cv::putText(mat, "(-1,+1)", cv::Point(center_x - 60, center_y + 50),
                    cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
-        cv::putText(mat, "(+1,-1)", cv::Point(center_x + 20, center_y + 50),
+        cv::putText(mat, "(-1,-1)", cv::Point(center_x + 20, center_y + 50),
                    cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
         
         // 绘制中心坐标
@@ -132,15 +137,15 @@ private:
         // 如果刷新标志为true，添加额外的刷新提示
         if (refresh_flag) {
             // 绘制半透明背景
-            cv::Rect text_bg(10, 10, 200, 30);
+            cv::Rect text_bg(10, 10, 300, 30);
             cv::rectangle(mat, text_bg, bg_color, -1);
             
-            cv::putText(mat, "COORDINATE REFRESHED!", cv::Point(15, 30),
+            cv::putText(mat, "COORDINATE SYSTEM: X=UP, Y=LEFT", cv::Point(15, 30),
                        cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 255), 2);
         }
     }
     
-    // 🔥 新增：绘制检测到的动物的单位向量
+    // 绘制检测到的动物的单位向量
     void drawAnimalVectors(cv::Mat& mat, const std::vector<std::pair<double, double>>& coords) {
         int center_x = static_cast<int>(IMAGE_WIDTH / 2.0);
         int center_y = static_cast<int>(IMAGE_HEIGHT / 2.0);
@@ -153,8 +158,8 @@ private:
             geometry_msgs::Point unit_vec = pixelToUnitVector(pixel_x, pixel_y);
             
             // 计算在图像上的显示位置 (缩放单位向量用于显示)
-            int vec_end_x = center_x + static_cast<int>(unit_vec.x * 60);
-            int vec_end_y = center_y - static_cast<int>(unit_vec.y * 60);  // 注意Y轴翻转
+            int vec_end_x = center_x - static_cast<int>(unit_vec.y * 60);  // Y向左，所以是减法
+            int vec_end_y = center_y - static_cast<int>(unit_vec.x * 60);  // X向上，所以是减法
             
             // 绘制从中心到目标的向量
             cv::arrowedLine(mat,
@@ -201,7 +206,7 @@ private:
         for (int i = 0; i < od_results->count; i++) {
             object_detect_result* det_result = &(od_results->results[i]);
             
-            // 🔥 新增：置信度低于0.6的不显示
+            // 置信度低于0.6的不显示
             if (det_result->prop < 0.6) {
                 continue;
             }
@@ -238,12 +243,12 @@ private:
         for (int i = 0; i < od_results->count; i++) {
             object_detect_result* det_result = &(od_results->results[i]);
             
-            // 🔥 新增：置信度低于0.6的不计入有效数据
+            // 置信度低于0.6的不计入有效数据
             if (det_result->prop < 0.6) {
                 continue;
             }
             
-            // 计算中心点坐标
+            // 计算中心点坐标 - 直接使用检测框坐标，无需转换
             double center_x = (det_result->box.left + det_result->box.right) / 2.0;
             double center_y = (det_result->box.top + det_result->box.bottom) / 2.0;
             coords.push_back({center_x, center_y});
@@ -270,7 +275,7 @@ private:
         }
     }
     
-    // 🔥 新增：检查是否有有效检测数据
+    // 检查是否有有效检测数据
     bool hasValidDetections(int peacock, int wolf, int monkey, int tiger, int elephant) {
         return (peacock + wolf + monkey + tiger + elephant) > 0;
     }
@@ -288,9 +293,11 @@ private:
             return;
         }
         
-        // 🔥 获取实际帧的尺寸
-        int actual_width = frame.cols;
-        int actual_height = frame.rows;
+        // 验证帧尺寸是否为期望的640x480
+        if (frame.cols != IMAGE_WIDTH || frame.rows != IMAGE_HEIGHT) {
+            ROS_WARN_THROTTLE(5.0, "Frame size mismatch: got %dx%d, expected %dx%d", 
+                             frame.cols, frame.rows, (int)IMAGE_WIDTH, (int)IMAGE_HEIGHT);
+        }
         
         // 转换为image_buffer_t格式
         image_buffer_t src_image;
@@ -308,10 +315,7 @@ private:
         std::vector<std::pair<double, double>> coords;
         
         if (ret == 0) {
-            // 🔥 调整检测框坐标到实际图像尺寸
-            adjustDetectionBoxes(&od_results, actual_width, actual_height);
-            
-            // 在图像上绘制检测结果
+            // 直接在图像上绘制检测结果，无需坐标转换
             drawObjectsOnMat(frame, &od_results);
             
             // 如果收到发布标志，则检查是否有有效数据再决定是否发布
@@ -320,7 +324,7 @@ private:
                 int peacock, wolf, monkey, tiger, elephant;
                 countAnimals(&od_results, peacock, wolf, monkey, tiger, elephant, coords);
                 
-                // 🔥 只有存在有效检测数据时才发布话题
+                // 只有存在有效检测数据时才发布话题
                 if (hasValidDetections(peacock, wolf, monkey, tiger, elephant)) {
                     publishAnimalData(peacock, wolf, monkey, tiger, elephant, coords);
                     publishImage(frame);
@@ -343,10 +347,10 @@ private:
             }
         }
         
-        // 🔥 始终绘制坐标系，如果刷新标志为true则高亮显示
+        // 始终绘制坐标系，如果刷新标志为true则高亮显示
         drawCoordinateSystem(frame, should_publish_data_);
         
-        // 🔥 绘制检测到的动物的单位向量
+        // 绘制检测到的动物的单位向量
         if (!coords.empty()) {
             drawAnimalVectors(frame, coords);
         }
@@ -359,36 +363,7 @@ private:
         free(src_image.virt_addr);
     }
     
-    // 🔥 新增：调整检测框坐标
-    void adjustDetectionBoxes(object_detect_result_list* od_results, int actual_width, int actual_height) {
-        // 如果实际尺寸与设定尺寸不同，需要缩放坐标
-        float scale_x = (float)actual_width / IMAGE_WIDTH;
-        float scale_y = (float)actual_height / IMAGE_HEIGHT;
-        
-        for (int i = 0; i < od_results->count; i++) {
-            object_detect_result* det_result = &(od_results->results[i]);
-            
-            // 缩放检测框坐标
-            det_result->box.left = (int)(det_result->box.left * scale_x);
-            det_result->box.top = (int)(det_result->box.top * scale_y);
-            det_result->box.right = (int)(det_result->box.right * scale_x);
-            det_result->box.bottom = (int)(det_result->box.bottom * scale_y);
-            
-            // 确保坐标在图像范围内
-            det_result->box.left = std::max(0, std::min(det_result->box.left, actual_width - 1));
-            det_result->box.top = std::max(0, std::min(det_result->box.top, actual_height - 1));
-            det_result->box.right = std::max(0, std::min(det_result->box.right, actual_width - 1));
-            det_result->box.bottom = std::max(0, std::min(det_result->box.bottom, actual_height - 1));
-        }
-        
-        // 调试输出
-        if (od_results->count > 0) {
-            ROS_DEBUG("Frame size: %dx%d, Scale: %.2fx%.2f", 
-                     actual_width, actual_height, scale_x, scale_y);
-        }
-    }
-    
-    // 执行检测并发布结果（保留原函数但简化）
+    // 执行检测并发布结果
     void performDetectionAndPublish() {
         ROS_INFO("Received detection trigger - will publish data on next detection");
         should_publish_data_ = true;  // 设置发布标志
@@ -430,6 +405,12 @@ private:
         ROS_INFO("Published animal data: Elephant=%d Monkey=%d Peacock=%d Tiger=%d Wolf=%d, Total=%zu",
                 msg.elephant, msg.monkey, msg.peacock, msg.tiger, msg.wolf,
                 msg.coordinates.size());
+        
+        // 输出坐标系信息用于调试
+        for (size_t i = 0; i < msg.coordinates.size(); i++) {
+            ROS_INFO("Animal %zu unit vector: X=%.3f (up), Y=%.3f (left)", 
+                     i, msg.coordinates[i].x, msg.coordinates[i].y);
+        }
     }
     
     // start_detect话题回调函数
@@ -474,7 +455,9 @@ public:
         ROS_INFO("Animal classes: 0=d_elephant, 1=h_monkey, 2=k_kongque, 3=l_tiger, 4=ll_wolf");
         ROS_INFO("Subscribed to /start_detect topic");
         ROS_INFO("Publishing to /animal and /yolo11/detection_image");
-        ROS_INFO("🔥 Confidence threshold: 0.6 (detections below 0.6 will be filtered out)");
+        ROS_INFO("Confidence threshold: 0.6 (detections below 0.6 will be filtered out)");
+        ROS_INFO("Coordinate system: X=UP (positive up), Y=LEFT (positive left)");
+        ROS_INFO("Resolution: 640x480 (model matches camera directly)");
     }
     
     ~YOLO11ROSNode() {
@@ -514,22 +497,24 @@ public:
             return -1;
         }
         
-        // 设置摄像头分辨率
+        // 设置摄像头分辨率为640x480以匹配模型
         cap_.set(cv::CAP_PROP_FRAME_WIDTH, IMAGE_WIDTH);
         cap_.set(cv::CAP_PROP_FRAME_HEIGHT, IMAGE_HEIGHT);
         
-        // 🔥 获取实际设置的分辨率
+        // 获取实际设置的分辨率
         double actual_width = cap_.get(cv::CAP_PROP_FRAME_WIDTH);
         double actual_height = cap_.get(cv::CAP_PROP_FRAME_HEIGHT);
         
         camera_opened_ = true;
         ROS_INFO("Camera opened successfully");
-        ROS_INFO("Requested resolution: %.0fx%.0f", IMAGE_WIDTH, IMAGE_HEIGHT);
+        ROS_INFO("Set resolution: %.0fx%.0f", IMAGE_WIDTH, IMAGE_HEIGHT);
         ROS_INFO("Actual resolution: %.0fx%.0f", actual_width, actual_height);
         
-        if (actual_width != IMAGE_WIDTH || actual_height != IMAGE_HEIGHT) {
-            ROS_WARN("Camera resolution mismatch! This may cause detection box offset.");
-            ROS_WARN("Consider updating IMAGE_WIDTH and IMAGE_HEIGHT constants.");
+        if (actual_width == IMAGE_WIDTH && actual_height == IMAGE_HEIGHT) {
+            ROS_INFO("Perfect match! Camera and model resolution are both 640x480");
+        } else {
+            ROS_WARN("Resolution mismatch detected!");
+            ROS_WARN("This may cause detection accuracy issues.");
         }
         
         return 0;
@@ -554,6 +539,8 @@ int main(int argc, char** argv)
         YOLO11ROSNode node;
         ROS_INFO("YOLO11 ROS Node started. Waiting for /start_detect messages...");
         ROS_INFO("Send 'rostopic pub /start_detect std_msgs/Bool \"data: true\"' to trigger detection");
+        ROS_INFO("Coordinate system: X=UP(+1 up, -1 down), Y=LEFT(+1 left, -1 right)");
+        ROS_INFO("Model input and camera output both 640x480 - no conversion needed!");
         node.spin();
     } catch (const std::exception& e) {
         ROS_FATAL("Exception in YOLO11 ROS Node: %s", e.what());

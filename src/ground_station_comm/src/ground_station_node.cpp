@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    ground_station_node.cpp
   * @brief   地面站通信ROS节点
-  * @version V2.4.0
+  * @version V2.5.0
   * @date    2025-08-01
   ******************************************************************************
   */
@@ -63,6 +63,8 @@ private:
         ARMING,                  // 解锁中
         TAKING_OFF,              // 起飞中
         FOLLOWING_TRAJECTORY,    // 按照预定航线飞行
+        WAYPOINT_HOVER_PRE,      // 航点到达后的第一次悬停（发送检测前）
+        WAYPOINT_HOVER_POST,     // 航点到达后的第二次悬停（发送检测后）
         MOVING_TO_GRID_CENTER,   // 移动到网格中心
         SCANNING_GRID,          // 在网格内扫描动物
         SCAN_HOVERING,          // 扫描间的短暂悬停
@@ -102,7 +104,10 @@ private:
     geometry_msgs::Point current_scan_target_;        // 当前扫描目标位置
     geometry_msgs::Point grid_center_;                // 当前网格中心
     ros::Time hover_start_time_;                      // 悬停开始时间
-    static constexpr double HOVER_DURATION = 1.2;     // 悬停持续时间（秒）
+    static constexpr double HOVER_DURATION = 1.2;     // 扫描悬停持续时间（秒）
+    static constexpr double WAYPOINT_HOVER_DURATION = 0.25;  // 航点悬停持续时间（秒）
+    ros::Time waypoint_hover_start_time_;             // 航点悬停开始时间
+    bool detect_signal_sent_;                         // 检测信号是否已发送
 
     // 已访问网格跟踪
     std::set<uint8_t> visited_grids_;
@@ -135,7 +140,8 @@ public:
         animal_data_received_(false),
         current_vector_index_(0),
         current_grid_number_(0),
-        landing_start_height_(FIXED_HEIGHT) {
+        landing_start_height_(FIXED_HEIGHT),
+        detect_signal_sent_(false) {
 
         // 读取参数
         pnh_.param<std::string>("serial_device", serial_device_, "/dev/ttyUSB0");
@@ -652,11 +658,6 @@ private:
             current_pose_ = *msg;
         }
 
-        // 检查当前网格（不在起飞时检查）
-        if (flight_state_ != FlightState::ARMING && flight_state_ != FlightState::TAKING_OFF) {
-            checkCurrentGrid();
-        }
-
         // 根据飞行状态进行相应处理
         switch (flight_state_.load()) {
             case FlightState::TAKING_OFF:
@@ -667,6 +668,14 @@ private:
                 if (is_flying_ && trajectory_received_) {
                     checkWaypointReached();
                 }
+                break;
+
+            case FlightState::WAYPOINT_HOVER_PRE:
+                checkWaypointPreHoverComplete();
+                break;
+
+            case FlightState::WAYPOINT_HOVER_POST:
+                checkWaypointPostHoverComplete();
                 break;
 
             case FlightState::MOVING_TO_GRID_CENTER:
@@ -754,16 +763,11 @@ private:
             std::lock_guard<std::mutex> lock(visited_grids_mutex_);
             bool is_new_grid = visited_grids_.find(grid_number) == visited_grids_.end();
 
-            // 发送检测信号
-            std_msgs::Bool detect_msg;
-            detect_msg.data = is_new_grid;
-            start_detect_pub_.publish(detect_msg);
-
             if (is_new_grid) {
                 visited_grids_.insert(grid_number);
-                ROS_INFO("Entered new grid %d, sending start_detect=true", grid_number);
+                ROS_INFO("Entered new grid %d", grid_number);
             } else {
-                ROS_INFO("Re-entered grid %d, sending start_detect=false", grid_number);
+                ROS_INFO("Re-entered grid %d", grid_number);
             }
         }
     }
@@ -866,20 +870,103 @@ private:
                 return;
             }
 
-            // 移动到下一个航点
-            current_waypoint_index_++;
+            // 如果是第一个航点，直接进入下一个航点，不进行悬停和检测
+            if (index == 0) {
+                ROS_INFO("First waypoint reached, moving to next waypoint without detection");
 
-            // 设置下一个航点为目标
-            if (current_waypoint_index_ < waypoints_.size()) {
-                // 解锁后设置目标，避免死锁
-                lock_wp.~lock_guard();
-                lock_pose.~lock_guard();
-                setCurrentTarget();
+                // 移动到下一个航点
+                current_waypoint_index_++;
+
+                // 设置下一个航点为目标
+                if (current_waypoint_index_ < waypoints_.size()) {
+                    lock_wp.~lock_guard();
+                    lock_pose.~lock_guard();
+                    setCurrentTarget();
+                } else {
+                    ROS_INFO("All waypoints completed");
+                    is_flying_ = false;
+                    flight_state_ = FlightState::IDLE;
+                    has_target_ = false;
+                }
             } else {
-                ROS_INFO("All waypoints completed");
-                is_flying_ = false;
-                flight_state_ = FlightState::IDLE;
-                has_target_ = false;
+                // 非第一个航点，进入悬停流程
+                ROS_INFO("Starting pre-detection hover at waypoint %zu", index + 1);
+
+                // 切换到第一次悬停状态
+                flight_state_ = FlightState::WAYPOINT_HOVER_PRE;
+                waypoint_hover_start_time_ = ros::Time::now();
+                detect_signal_sent_ = false;
+            }
+        }
+    }
+
+    /**
+     * @brief 检查航点第一次悬停是否完成
+     */
+    void checkWaypointPreHoverComplete() {
+        double hover_duration = (ros::Time::now() - waypoint_hover_start_time_).toSec();
+
+        if (hover_duration >= WAYPOINT_HOVER_DURATION) {
+            ROS_INFO("Pre-detection hover complete, sending start_detect=true");
+
+            // 发送检测信号
+            std_msgs::Bool detect_msg;
+            detect_msg.data = true;
+            start_detect_pub_.publish(detect_msg);
+            detect_signal_sent_ = true;
+
+            // 记录当前网格为已访问
+            {
+                geometry_msgs::Point current_position;
+                {
+                    std::lock_guard<std::mutex> lock(pose_mutex_);
+                    current_position = current_pose_.pose.position;
+                }
+                uint8_t grid_number = trajectory_mapper_.positionToGridNumber(current_position);
+                if (grid_number != 0) {
+                    std::lock_guard<std::mutex> lock(visited_grids_mutex_);
+                    visited_grids_.insert(grid_number);
+                }
+            }
+
+            // 切换到第二次悬停状态
+            flight_state_ = FlightState::WAYPOINT_HOVER_POST;
+            waypoint_hover_start_time_ = ros::Time::now();
+        }
+    }
+
+    /**
+     * @brief 检查航点第二次悬停是否完成
+     */
+    void checkWaypointPostHoverComplete() {
+        double hover_duration = (ros::Time::now() - waypoint_hover_start_time_).toSec();
+
+        if (hover_duration >= WAYPOINT_HOVER_DURATION) {
+            ROS_INFO("Post-detection hover complete");
+
+            // 检查是否收到动物数据并需要扫描
+            if (animal_data_received_) {
+                // 动物数据已在回调中处理，这里不需要额外操作
+                animal_data_received_ = false;
+            } else {
+                // 没有收到动物数据或没有动物，继续下一个航点
+                ROS_INFO("No animal detection, moving to next waypoint");
+
+                // 移动到下一个航点
+                current_waypoint_index_++;
+
+                // 设置下一个航点为目标
+                std::lock_guard<std::mutex> lock(waypoints_mutex_);
+                if (current_waypoint_index_ < waypoints_.size()) {
+                    flight_state_ = FlightState::FOLLOWING_TRAJECTORY;
+                    lock.~lock_guard();
+                    setCurrentTarget();
+                } else {
+                    ROS_INFO("All waypoints completed");
+                    is_flying_ = false;
+                    flight_state_ = FlightState::IDLE;
+                    has_target_ = false;
+                }
             }
         }
     }
@@ -981,6 +1068,12 @@ private:
                         break;
                     case FlightState::FOLLOWING_TRAJECTORY:
                         state_str = "FOLLOWING_TRAJECTORY";
+                        break;
+                    case FlightState::WAYPOINT_HOVER_PRE:
+                        state_str = "WAYPOINT_HOVER_PRE";
+                        break;
+                    case FlightState::WAYPOINT_HOVER_POST:
+                        state_str = "WAYPOINT_HOVER_POST";
                         break;
                     case FlightState::MOVING_TO_GRID_CENTER:
                         state_str = "MOVING_TO_GRID_CENTER";
