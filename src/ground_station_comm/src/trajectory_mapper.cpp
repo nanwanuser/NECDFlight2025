@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    trajectory_mapper.cpp
   * @brief   轨迹映射器实现
-  * @version V1.2.0
+  * @version V1.2.1
   * @date    2025-08-01
   ******************************************************************************
   */
@@ -94,8 +94,14 @@ std::vector<geometry_msgs::PoseStamped> TrajectoryMapper::parseTrajectory(const 
  */
 uint8_t TrajectoryMapper::positionToGridNumber(const geometry_msgs::Point& position) {
     // 检查是否在网格范围内
-    if (position.x < 0 || position.x > (GRID_HEIGHT - 1) * GRID_SIZE ||
-        position.y < 0 || position.y > (GRID_WIDTH - 1) * GRID_SIZE) {
+    // 修正：使用正确的边界值
+    // x范围：0 到 3.5米（7个0.5米的格子）
+    // y范围：0 到 4.5米（9个0.5米的格子）
+    if (position.x < 0 || position.x >= GRID_HEIGHT * GRID_SIZE ||
+        position.y < 0 || position.y >= GRID_WIDTH * GRID_SIZE) {
+        ROS_DEBUG("Position (%.2f, %.2f) is outside grid bounds [0, %.1f] x [0, %.1f]",
+                  position.x, position.y,
+                  GRID_HEIGHT * GRID_SIZE, GRID_WIDTH * GRID_SIZE);
         return 0;  // 不在网格内
     }
 
@@ -103,12 +109,19 @@ uint8_t TrajectoryMapper::positionToGridNumber(const geometry_msgs::Point& posit
     int row = static_cast<int>(position.x / GRID_SIZE);
     int col = static_cast<int>(position.y / GRID_SIZE);
 
-    // 边界检查
+    // 边界检查（防止浮点数精度问题导致的越界）
     if (row >= GRID_HEIGHT) row = GRID_HEIGHT - 1;
     if (col >= GRID_WIDTH) col = GRID_WIDTH - 1;
+    if (row < 0) row = 0;
+    if (col < 0) col = 0;
 
     // 计算网格标号
-    return static_cast<uint8_t>(row * GRID_WIDTH + col + 1);
+    uint8_t grid_number = static_cast<uint8_t>(row * GRID_WIDTH + col + 1);
+
+    ROS_DEBUG("Position (%.2f, %.2f) -> Grid %d (row=%d, col=%d)",
+              position.x, position.y, grid_number, row, col);
+
+    return grid_number;
 }
 
 /**
