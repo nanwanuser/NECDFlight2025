@@ -97,13 +97,13 @@ uint8_t TrajectoryMapper::positionToGridNumber(const geometry_msgs::Point& posit
     // 修正：使用正确的边界值
     // x范围：0 到 3.5米（7个0.5米的格子）
     // y范围：0 到 4.5米（9个0.5米的格子）
-    if (position.x < 0 || position.x >= GRID_HEIGHT * GRID_SIZE ||
-        position.y < 0 || position.y >= GRID_WIDTH * GRID_SIZE) {
-        ROS_DEBUG("Position (%.2f, %.2f) is outside grid bounds [0, %.1f] x [0, %.1f]",
-                  position.x, position.y,
-                  GRID_HEIGHT * GRID_SIZE, GRID_WIDTH * GRID_SIZE);
-        return 0;  // 不在网格内
-    }
+    // if (position.x < 0 || position.x >= GRID_HEIGHT * GRID_SIZE ||
+    //     position.y < 0 || position.y >= GRID_WIDTH * GRID_SIZE) {
+    //     ROS_DEBUG("Position (%.2f, %.2f) is outside grid bounds [0, %.1f] x [0, %.1f]",
+    //               position.x, position.y,
+    //               GRID_HEIGHT * GRID_SIZE, GRID_WIDTH * GRID_SIZE);
+    //     return 0;  // 不在网格内
+    // }
 
     // 计算行列索引
     int row = static_cast<int>(position.x / GRID_SIZE);
@@ -140,8 +140,10 @@ geometry_msgs::Point TrajectoryMapper::getGridCenter(uint8_t grid_number) {
     int col = index % GRID_WIDTH;
 
     // 网格中心位置
-    center.x = row * GRID_SIZE + GRID_SIZE / 2.0;
-    center.y = col * GRID_SIZE + GRID_SIZE / 2.0;
+    // center.x = row * GRID_SIZE + GRID_SIZE / 2.0;
+    // center.y = col * GRID_SIZE + GRID_SIZE / 2.0;
+    center.x = row * GRID_SIZE ;
+    center.y = col * GRID_SIZE ;
     center.z = HEIGHT;  // 固定高度0.9米
 
     return center;

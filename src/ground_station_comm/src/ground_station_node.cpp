@@ -582,8 +582,28 @@ private:
             animal_data_received_ = true;
         }
 
-        // 向地面站发送动物数据
-        sendAnimalDataToGroundStation();
+        // 获取当前网格编号
+        geometry_msgs::Point current_position;
+        {
+            std::lock_guard<std::mutex> lock(pose_mutex_);
+            current_position = current_pose_.pose.position;
+        }
+        uint8_t grid_number = trajectory_mapper_.positionToGridNumber(current_position);
+
+        // 检查当前网格是否已经扫描过
+        bool already_scanned = false;
+        {
+            std::lock_guard<std::mutex> lock(scanned_grids_mutex_);
+            already_scanned = (scanned_grids_.find(grid_number) != scanned_grids_.end());
+        }
+
+        // 只有未扫描过的网格才向地面站发送动物数据
+        if (!already_scanned) {
+            // 向地面站发送动物数据
+            sendAnimalDataToGroundStation();
+        } else {
+            ROS_INFO("Grid %d already scanned, not sending animal data to ground station", grid_number);
+        }
 
         // 检查是否需要进入扫描模式
         checkAndStartScanning();
