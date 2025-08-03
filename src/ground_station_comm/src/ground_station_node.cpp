@@ -79,6 +79,9 @@ private:
     geometry_msgs::PoseStamped current_pose_;
     std::mutex pose_mutex_;
 
+    // 添加当前航点的网格标号缓存
+    uint8_t current_waypoint_grid_number_;
+
     // MAVROS状态
     mavros_msgs::State current_mavros_state_;
     std::mutex mavros_state_mutex_;
@@ -450,14 +453,14 @@ private:
      * @brief 设置网格中心目标
      */
     void setGridCenterTarget() {
-        // 获取当前网格中心
-        geometry_msgs::Point current_position;
-        {
-            std::lock_guard<std::mutex> lock(pose_mutex_);
-            current_position = current_pose_.pose.position;
+        // 使用当前航点的网格标号，而不是通过位置计算
+        uint8_t grid_number = current_waypoint_grid_number_;
+
+        if (grid_number == 0) {
+            ROS_WARN("Invalid grid number for current waypoint");
+            return;
         }
 
-        uint8_t grid_number = trajectory_mapper_.positionToGridNumber(current_position);
         grid_center_ = trajectory_mapper_.getGridCenter(grid_number);
         current_scanning_grid_ = grid_number;  // 记录当前正在扫描的网格
 
@@ -504,7 +507,7 @@ private:
         target.header.stamp = ros::Time::now();
 
         // 从网格中心向扫描方向移动
-        double scan_distance = 0.25;  // 向外扫描25cm（减小扫描距离）
+        double scan_distance = 0.10;  // 向外扫描25cm（减小扫描距离）
         current_scan_target_.x = grid_center_.x + scan_vectors_[current_vector_index_].x * scan_distance;
         current_scan_target_.y = grid_center_.y + scan_vectors_[current_vector_index_].y * scan_distance;
         current_scan_target_.z = FIXED_HEIGHT;  // 保持固定高度
@@ -572,9 +575,8 @@ private:
     }
 
     /**
-     * @brief 动物数据回调函数
-     * 注意：这个回调是在接收到动物检测结果时触发的
-     */
+         * @brief 动物数据回调函数
+         */
     void animalDataCallback(const ground_station_comm::AnimalData::ConstPtr& msg) {
         {
             std::lock_guard<std::mutex> lock(animal_data_mutex_);
@@ -582,13 +584,13 @@ private:
             animal_data_received_ = true;
         }
 
-        // 获取当前网格编号
-        geometry_msgs::Point current_position;
-        {
-            std::lock_guard<std::mutex> lock(pose_mutex_);
-            current_position = current_pose_.pose.position;
+        // 使用当前航点的网格标号
+        uint8_t grid_number = current_waypoint_grid_number_;
+
+        if (grid_number == 0) {
+            ROS_WARN("Invalid grid number for current waypoint, cannot process animal data");
+            return;
         }
-        uint8_t grid_number = trajectory_mapper_.positionToGridNumber(current_position);
 
         // 检查当前网格是否已经扫描过
         bool already_scanned = false;
@@ -609,20 +611,16 @@ private:
         checkAndStartScanning();
     }
 
+
+
     /**
      * @brief 向地面站发送动物数据
      */
     void sendAnimalDataToGroundStation() {
         uint8_t data[6];  // 1字节网格标号 + 5字节动物数量
 
-        // 获取当前网格标号
-        geometry_msgs::Point current_position;
-        {
-            std::lock_guard<std::mutex> lock(pose_mutex_);
-            current_position = current_pose_.pose.position;
-        }
-
-        data[0] = trajectory_mapper_.positionToGridNumber(current_position);
+        // 使用当前航点的网格标号
+        data[0] = current_waypoint_grid_number_;
 
         // 添加动物数量
         {
@@ -642,8 +640,8 @@ private:
     }
 
     /**
-     * @brief 检查并开始扫描
-     */
+ * @brief 检查并开始扫描
+ */
     void checkAndStartScanning() {
         std::lock_guard<std::mutex> lock(animal_data_mutex_);
 
@@ -654,13 +652,8 @@ private:
                                latest_animal_data_.tiger +
                                latest_animal_data_.elephant;
 
-        // 获取当前网格编号
-        geometry_msgs::Point current_position;
-        {
-            std::lock_guard<std::mutex> lock_pose(pose_mutex_);
-            current_position = current_pose_.pose.position;
-        }
-        uint8_t grid_number = trajectory_mapper_.positionToGridNumber(current_position);
+        // 使用当前航点的网格标号
+        uint8_t grid_number = current_waypoint_grid_number_;
 
         // 检查当前网格是否已经扫描过
         bool already_scanned = false;
@@ -871,7 +864,7 @@ private:
         }
     }
 
-    /**
+        /**
      * @brief 检查是否到达航点
      */
     void checkWaypointReached() {
@@ -882,6 +875,9 @@ private:
         if (index >= waypoints_.size()) {
             return;
         }
+
+        // 获取当前航点的网格标号
+        current_waypoint_grid_number_ = trajectory_mapper_.getGridNumberForWaypoint(index);
 
         // 检查当前航点是否已经检测过
         {
@@ -904,7 +900,8 @@ private:
 
         // 如果到达航点
         if (distance < position_threshold_) {
-            ROS_INFO("Reached waypoint %zu/%zu", index + 1, waypoints_.size());
+            ROS_INFO("Reached waypoint %zu/%zu (Grid %d)",
+                     index + 1, waypoints_.size(), current_waypoint_grid_number_);
 
             // 标记当前航点为已检测
             {
@@ -981,17 +978,9 @@ private:
             detect_signal_sent_ = true;
 
             // 记录当前网格为已访问
-            {
-                geometry_msgs::Point current_position;
-                {
-                    std::lock_guard<std::mutex> lock(pose_mutex_);
-                    current_position = current_pose_.pose.position;
-                }
-                uint8_t grid_number = trajectory_mapper_.positionToGridNumber(current_position);
-                if (grid_number != 0) {
-                    std::lock_guard<std::mutex> lock(visited_grids_mutex_);
-                    visited_grids_.insert(grid_number);
-                }
+            if (current_waypoint_grid_number_ != 0) {
+                std::lock_guard<std::mutex> lock(visited_grids_mutex_);
+                visited_grids_.insert(current_waypoint_grid_number_);
             }
 
             // 切换到第二次悬停状态

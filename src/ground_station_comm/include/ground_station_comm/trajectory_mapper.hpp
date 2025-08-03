@@ -2,7 +2,7 @@
 ******************************************************************************
   * @file    trajectory_mapper.hpp
   * @brief   轨迹映射器 - 将网格标号映射到ROS坐标系
-  * @version V1.2.0
+  * @version V1.3.0
   * @date    2025-08-01
   ******************************************************************************
   */
@@ -29,6 +29,7 @@ namespace GroundStation {
         static constexpr int GRID_HEIGHT = 7;     // 网格高度
 
         std::vector<geometry_msgs::PoseStamped> waypoints_;  // 航点列表
+        std::vector<uint8_t> waypoint_grid_numbers_;         // 航点对应的网格标号列表
 
     public:
         TrajectoryMapper() = default;
@@ -53,12 +54,22 @@ namespace GroundStation {
         /**
          * @brief 清空航点列表
          */
-        void clearWaypoints() { waypoints_.clear(); }
+        void clearWaypoints() {
+            waypoints_.clear();
+            waypoint_grid_numbers_.clear();
+        }
 
         /**
          * @brief 获取航点列表
          */
         const std::vector<geometry_msgs::PoseStamped>& getWaypoints() const { return waypoints_; }
+
+        /**
+         * @brief 根据航点索引获取对应的网格标号
+         * @param waypoint_index 航点索引
+         * @return 网格标号(1-63)，如果索引无效返回0
+         */
+        uint8_t getGridNumberForWaypoint(size_t waypoint_index) const;
 
         /**
          * @brief 根据当前位置找到当前所在的网格标号

@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    trajectory_mapper.cpp
   * @brief   轨迹映射器实现
-  * @version V1.2.1
+  * @version V1.3.0
   * @date    2025-08-01
   ******************************************************************************
   */
@@ -73,20 +73,37 @@ bool TrajectoryMapper::gridNumberToPose(uint8_t grid_number, geometry_msgs::Pose
  */
 std::vector<geometry_msgs::PoseStamped> TrajectoryMapper::parseTrajectory(const uint8_t* data, uint16_t len) {
     waypoints_.clear();
+    waypoint_grid_numbers_.clear();
 
     // 每个网格标号占1字节
     for (uint16_t i = 0; i < len; i++) {
         geometry_msgs::PoseStamped pose;
-        if (gridNumberToPose(data[i], pose)) {
+        uint8_t grid_number = data[i];
+
+        if (gridNumberToPose(grid_number, pose)) {
             waypoints_.push_back(pose);
+            waypoint_grid_numbers_.push_back(grid_number);  // 保存网格标号
         } else {
-            ROS_WARN("Skipping invalid grid number at index %d", i);
+            ROS_WARN("Skipping invalid grid number %d at index %d", grid_number, i);
         }
     }
 
     ROS_INFO("Parsed trajectory with %zu waypoints (height=%.1fm)", waypoints_.size(), HEIGHT);
 
     return waypoints_;
+}
+
+/**
+ * @brief 根据航点索引获取对应的网格标号
+ */
+uint8_t TrajectoryMapper::getGridNumberForWaypoint(size_t waypoint_index) const {
+    if (waypoint_index >= waypoint_grid_numbers_.size()) {
+        ROS_WARN("Invalid waypoint index %zu, max index is %zu",
+                 waypoint_index, waypoint_grid_numbers_.size() - 1);
+        return 0;
+    }
+
+    return waypoint_grid_numbers_[waypoint_index];
 }
 
 /**
